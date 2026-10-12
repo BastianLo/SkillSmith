@@ -160,7 +160,8 @@ src/web/stats.ts             Statistik-Endpunkte (Überblick, Wissen, Hinweise, 
                              Aufgaben, Pipeline, Agenten, Ereignisse eines Tages)
 src/web/static/              index.html, style.css, js/*.js (ES-Module ohne Build: api, dom, ui, markdown, diff,
                              charts, cm, palette, parts, main) und js/views/*.js (eine Datei je Route, lazy);
-                             vendor/: cytoscape 3.34.3, CodeMirror 6, uPlot 1.6.32, Mermaid 11.17.2,
+                             vendor/: d3-force/d3-drag/d3-zoom/d3-selection (ISC; gebündelt als
+                             `d3-force.min.js`), CodeMirror 6, uPlot 1.6.32, Mermaid 11.17.2,
                              highlight.js 11.11.1 (Lizenzen daneben) – gebaut mit tools/vendor/build.sh
 src/core/redact.ts, skill.ts, context.ts, config.ts, log.ts, types.ts, util/{fs,text}.ts
 ```
@@ -268,7 +269,7 @@ Python-Umgebung wird in `state/python.json` 24 h gecacht (`/scripts-test` erneue
 - **Aktionen:** `POST /api/action {action, target, base, args, preview, force}`. `preview` liefert Diff/Folgen ohne Schreiben (Bestätigungsdialog nach `web.confirm`), `base` = gelesene Version → bei Abweichung 409 mit `{changedBy, changedAt, diff}`, `force` nach Bestätigung (428). Antwort `{ok, message, commit, run, undo, open, data}`; Live-Ereignis `run.finished`.
 - **KI-Recht** (`fields.ai`): `frei` | `vorschlag` (KI-Änderungen → Staging/Vorschlag mit Diff, abgelehnte werden als Hash gemerkt) | `lesen` (nur `flag`) | `privat` (unsichtbar für Suche/Hinweise/Tools/Embeddings, außer `docs.privateEmbeddings` nur für die Nutzersuche). Durchgesetzt in `Ops` und im Retriever.
 - **Live:** `GET /api/live` (SSE über fetch, Token im Header), Ereignisse aus `ctx.bus` (run.finished, commit, task.changed, pipeline.run/log, agent.job/event/tool, inbox.changed, notify); Replay nur bei Reconnect (`Last-Event-ID`).
-- **Frontend:** ES-Module ohne Build, Router mit Hash-Routen (deutsch, Aliase für alte Routen), eine View-Datei je Route (dynamischer Import), `ctx.alive()`/`ctx.on()`/`ctx.cleanup()` gegen veraltete Antworten. DOM nur über `h()`/`textContent`; Markdown-Renderer escapt zuerst (Whitelist-Tags, Links nur `http(s)`/intern, Mermaid/hljs nachträglich). Anhänge über Blob-URLs (Token-Header). CodeMirror/highlight.js per dynamischem Import, Mermaid/uPlot lazy per `<script>`. Cytoscape fügt sonst ein `<style>` ein – das `<link id="__________cytoscape_stylesheet">` verhindert das.
+- **Frontend:** ES-Module ohne Build, Router mit Hash-Routen (deutsch, Aliase für alte Routen), eine View-Datei je Route (dynamischer Import), `ctx.alive()`/`ctx.on()`/`ctx.cleanup()` gegen veraltete Antworten. DOM nur über `h()`/`textContent`; Markdown-Renderer escapt zuerst (Whitelist-Tags, Links nur `http(s)`/intern, Mermaid/hljs nachträglich). Anhänge über Blob-URLs (Token-Header). CodeMirror/highlight.js per dynamischem Import, Mermaid/uPlot lazy per `<script>`. Die Graph-Ansicht `#/graph` (`views/graph.js`) rendert mit **d3-force** und eigenem **SVG** (`#graph-svg`, Klassen `.gnode`/`.gedge`/`.hulls`/`.glabel`): dauerhaft laufende Physik-Simulation (`alphaTarget(0.05)`; > 300 Knoten oder 0 Kanten → `alphaTarget(0)` und Auslaufen), themenbasiertes Clustering über schwache, nicht gerenderte Zusatzkanten aus gemeinsamen Tags, Drag pinnt (`fx`/`fy`, Nachbarn folgen), Loslassen gibt frei, **Alt+Klick pinnt dauerhaft**, Zoom/Pan via `d3-zoom` (`scaleExtent [0.08,3]`).
 - **Agenten-Aufträge:** Session mit `directory = Worktree` (eigene Plugin-Instanz!) – darum hält `agent-hub.ts` Guards, Session-Eltern und Listener prozessweit (`globalThis`), `checkTool` läuft in `tool.execute.before` jeder Instanz. Der Hauptsession werden **keine** `tools` beim Prompt übergeben: opencode 1.18 macht daraus Session-Permissions, die für alle späteren Prompts und Subagenten bleiben (ein späteres `allow` würde die Nutzer-Permissions überstimmen). Nur die Review-Session (schreibt nie) bekommt `tools: {write/edit/…: false, bash: false}`.
 
 ### Parallelität und Locks
@@ -342,7 +343,7 @@ OPENCODE_BIN=$(which opencode) bun test/e2e/run.ts   # E2E (103 Prüfungen, ~7 m
 # Weboberfläche im Browser (Playwright-Core + Chromium):
 bun test/web/demo.ts 47555                    # Demo-Store mit Daten, druckt DEMO_URL
 DEMO_URL=… PLAYWRIGHT_CORE=… bun test/web/ui-smoke.ts shots   # ~40 Routen hell/dunkel, keine JS-Fehler
-DEMO_URL=… PLAYWRIGHT_CORE=… bun test/web/ui-flows.ts shots   # Schreib-Abläufe über die echte UI
+DEMO_URL=… PLAYWRIGHT_CORE=… bun test/web/ui-flows.ts shots   # Schreib-Abläufe + Graph-Physik (Dauerlauf, Drag zieht Nachbarn) über die echte UI
 tools/vendor/build.sh                         # Vendor-Bibliotheken neu bauen (nur bei Versionswechsel)
 ```
 

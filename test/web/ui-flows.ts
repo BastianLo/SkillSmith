@@ -187,6 +187,63 @@ await page.waitForTimeout(800)
   await page.waitForTimeout(800)
 }
 
+// 11. graph: d3-force physics keeps running (AC1) and drag pulls neighbours (AC2)
+{
+  await go("#/graph", 1500)
+  const hasHook = await page.evaluate(() => typeof (window as any).__smithGraph?.nodes === "function")
+  if (!hasHook) {
+    check("Graph: Dauerlauf bewegt Knoten", false, "window.__smithGraph fehlt")
+    check("Graph: Drag zieht Nachbarn", false, "window.__smithGraph fehlt")
+  } else {
+    const pos = () => page.evaluate(() => (window as any).__smithGraph.nodes().map((d: any) => [d.id, d.x, d.y] as [string, number, number]))
+    const t0 = await pos()
+    await page.waitForTimeout(800)
+    const t1 = await pos()
+    const byId = new Map(t1.map(([id, x, y]) => [id, [x, y]]))
+    const moved = t0.filter(([id, x, y]) => {
+      const p = byId.get(id)
+      return p && Math.hypot(p[0] - x, p[1] - y) > 0.5
+    }).length
+    check("Graph: Dauerlauf bewegt Knoten", moved >= 2, `${moved} Knoten bewegt in 800 ms`)
+
+    const prep = await page.evaluate(() => {
+      const g = (window as any).__smithGraph
+      const links = g.links()
+      const real = links.find((l: any) => !l.weak && l.source && l.target && typeof l.source === "object" && typeof l.target === "object")
+      if (!real) return { ok: false, why: "keine echte Kante" }
+      const a = real.source
+      const b = real.target
+      ;(window as any).__gtest = { aId: a.id, bId: b.id, bx: b.x, by: b.y }
+      a.fx = a.x + 40
+      a.fy = a.y + 40
+      g.simulation().alphaTarget(0.3).restart()
+      return { ok: true, a: a.id, b: b.id }
+    })
+    if (!prep.ok) {
+      check("Graph: Drag zieht Nachbarn", false, prep.why)
+    } else {
+      await page.waitForTimeout(800)
+      const bMoved = await page.evaluate(() => {
+        const g = (window as any).__smithGraph
+        const t = (window as any).__gtest
+        if (!g || !t) return null
+        const b = g.nodes().find((d: any) => d.id === t.bId)
+        return b ? Math.hypot(b.x - t.bx, b.y - t.by) : null
+      })
+      check("Graph: Drag zieht Nachbarn", bMoved !== null && bMoved > 0.5, bMoved === null ? "Nachbar nicht gefunden" : `Nachbar ${prep.b} ${bMoved.toFixed(1)} px bewegt`)
+      await page.evaluate(() => {
+        const g = (window as any).__smithGraph
+        const a = g?.nodes().find((d: any) => d.id === (window as any).__gtest?.aId)
+        if (a) {
+          a.fx = null
+          a.fy = null
+        }
+        g?.simulation().alphaTarget(0.05)
+      })
+    }
+  }
+}
+
 await browser.close()
 const bad = results.filter((r) => !r[1])
 if (errors.length) console.error(errors.join("\n"))

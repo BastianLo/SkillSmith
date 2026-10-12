@@ -6,8 +6,7 @@
   <meta name="referrer" content="no-referrer">
   <title>skillsmith</title>
   <link rel="icon" href="data:,">
-  <!-- the id tells Cytoscape that its container style is already present (no inline <style> needed under the CSP) -->
-  <link id="__________cytoscape_stylesheet" rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="vendor/uplot.min.css">
 </head>
 <body>
@@ -29,7 +28,7 @@
   <main id="view" tabindex="-1"></main>
   <div class="toasts" id="toasts" aria-live="polite"></div>
   <div class="sr-only" id="announce" aria-live="assertive"></div>
-  <script src="vendor/cytoscape.min.js"></script>
+  <script src="vendor/d3-force.min.js"></script>
   <script type="module" src="js/main.js"></script>
 </body>
 </html>

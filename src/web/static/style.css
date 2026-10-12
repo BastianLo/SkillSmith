@@ -569,12 +569,31 @@ a.rel:hover { background: var(--panel-2); text-decoration: none; }
 .graph-side h3:first-child { margin-top: 4px; }
 .graph-side label { display: flex; gap: 7px; align-items: center; padding: 2px 0; cursor: pointer; }
 .graph-main { position: relative; min-width: 0; background: var(--bg); }
-#cy { position: absolute; inset: 0; }
+#graph-svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; }
 .graph-info { position: absolute; left: 12px; bottom: 10px; color: var(--faint); font-size: 12px; background: color-mix(in srgb, var(--bg) 80%, transparent); padding: 2px 6px; border-radius: 6px; }
 .graph-tools { position: absolute; right: 12px; top: 10px; display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .graph-mode { position: absolute; left: 12px; top: 10px; }
 .graph-detail { border-left: 1px solid var(--border); overflow-y: auto; padding: 14px 16px; background: var(--panel); }
 .graph-tip { position: fixed; z-index: 120; pointer-events: none; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-lg); padding: 7px 10px; font-size: 12px; max-width: 320px; }
+
+/* d3-force SVG renderer */
+#graph-svg:active { cursor: grabbing; }
+#graph-svg .hulls rect { fill: none; stroke: var(--border-strong); stroke-dasharray: 5 4; stroke-width: 1; opacity: .7; }
+#graph-svg .gnode { cursor: pointer; }
+#graph-svg .gnode circle { stroke: var(--border-strong); stroke-width: 1.5; }
+#graph-svg .gnode circle.own { stroke-dasharray: 3 2; }
+#graph-svg .gnode.center circle { stroke: var(--accent); stroke-width: 3; }
+#graph-svg .gnode.faded { opacity: .1; }
+#graph-svg .gnode.archived { opacity: .4; }
+#graph-svg .gnode.hover circle { stroke: var(--accent); stroke-width: 2.5; }
+#graph-svg .gnode.selected circle { stroke: var(--accent); stroke-width: 3; }
+#graph-svg .glabel { font-size: 11px; text-anchor: middle; fill: var(--text); paint-order: stroke; stroke: var(--bg); stroke-width: 2px; stroke-linejoin: round; pointer-events: none; }
+#graph-svg .gedge { opacity: .7; }
+#graph-svg .gedge.derived { stroke-dasharray: 4 3; opacity: .4; }
+#graph-svg .gedge.hover { stroke: var(--accent); opacity: 1; }
+#graph-svg .path { stroke: var(--accent); stroke-width: 5; opacity: 1; }
+#graph-svg .linksrc { stroke: var(--accent); stroke-dasharray: 6 3; }
+#graph-svg .hidden { display: none; }
 @media (max-width: 1100px) { .graph-layout { grid-template-columns: 1fr; grid-template-rows: auto 60vh auto; } .graph-side, .graph-detail { border: 0; } }
 
 /* semantic map */
