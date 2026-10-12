@@ -35,11 +35,26 @@ Prinzipien:
 - **`package.json` ohne `main`/`exports`**, **keine Laufzeit-Abhängigkeiten** (nur Node-Builtins). `@opencode-ai/plugin` wird optional dynamisch importiert (zod-Schemas, `src/host/schema.ts`); sonst JSON-Schema-Args. `SKILLSMITH_FORCE_JSON_SCHEMA=1` erzwingt den Fallback (E2E grün in beiden Modi).
 - `src/py/checker.py` wird über `new URL("../py/checker.py", import.meta.url)` gefunden – beim Packen mitliefern.
 - Mehrfachinstanzen pro Verzeichnis: Guard `globalThis[Symbol.for("skillsmith.instance:<dir>")]`.
+- Env-Overrides in `resolveOptions` (`src/config.ts`) überschreiben die Config-Datei, damit CLI und Plugin übereinstimmen: `SKILLSMITH_STORE_DIR` (→ `storeDir`), `SKILLSMITH_WEB_AUTOSTART` (→ `web.autostart`), `SKILLSMITH_WEB_HOST` (→ `web.host`), `SKILLSMITH_WEB_PORT` (→ `web.port`, nur gültige Ports 1–65535). Dazu die bestehenden `SKILLSMITH_DISABLED=1`, `SKILLSMITH_DEBUG=1`, `SKILLSMITH_EMBEDDINGS=0`. `SKILLSMITH_OPENCODE_BIN` wird nur von der CLI gelesen (opencode-Binary), nicht vom Plugin.
 
 ## 3. Architektur
 
 ```
 index.ts                     export default { id: "skillsmith", server: createServer }
+bin/skillsmith               ausführbarer Launcher (Node-Shebang); löst seinen realen Pfad auf und
+                             importiert bin/skillsmith.ts (der Befehl bleibt ohne Dateiendung)
+bin/skillsmith.ts            CLI der eigenständigen Anwendung: run/start/stop/restart/status/url/logs/
+                             enable/disable; startet `opencode serve --port 0`, liest die Adresse aus
+                             dessen Ausgabe, stößt per GET /agent das lazy Laden des Plugins an, wartet
+                             auf state/web.json; Store-Auflösung wie das Plugin; `enable` schreibt einen
+                             launchd-LaunchAgent com.skillsmith.agent (führt die CLI aus, RunAtLoad +
+                             KeepAlive), `start` schreibt state/cli.json. Node >= 22.6, keine Abhängigkeiten.
+                             `classifyLauncher` löst den opencode-Launcher auf: echtes Binary (ELF/Mach-O/PE)
+                             oder Shebang → direkt starten; Pointer-Datei (kein Shebang, einzeiliger Text auf
+                             eine existierende Datei) → rekursiv folgen; Verzeichnis → <dir>/package/bin/opencode;
+                             sonst /bin/sh <datei> … (ENOEXEC-Fallback). Die Argumente (`serve --port 0 …`)
+                             werden durchgereicht; der aufgelöste Pfad landet als SKILLSMITH_OPENCODE_BIN in
+                             der launchd-Plist.
 src/host/v1.ts               Hooks: config (11 Agenten, Permissions, 36 Befehle, skills.paths), tool,
                              event (idle/error/status → SessionSignals), chat.message (Zähler, Modell merken,
                              „merk dir“ → rememberRequested, Hinweise), experimental.chat.messages.transform
@@ -307,6 +322,7 @@ Wie v1: mkdir-Locks (`store`, `git`, `review-<sid>`, `curator`, `lifecycle`, `us
 - Plugins laufen in Bun: `globalThis.Bun.serve` steht zur Verfügung (Weboberfläche).
 - `session.prompt(Async)` mit `tools` (1.18.35): wird zu Session-Permissions `{permission, pattern:"*", action}` und **ersetzt** die bisherigen Session-Permissions dauerhaft; Task-Subagenten erben sie. Ohne `tools` bleibt alles wie es ist – es gibt keinen Weg, die Regeln wieder zu entfernen (PATCH `permission` hängt nur an).
 - Eine Session mit `query.directory` = anderes Verzeichnis läuft in einer eigenen Plugin-Instanz (eigener `server()`-Aufruf) im selben Prozess.
+- `opencode serve` lädt Plugins **lazy**: der `server`-Hook feuert erst, wenn ein API-Request eintrifft. Ohne Request passiert bei `serve` nichts – auch der Web-Autostart läuft nicht an. Die Standalone-CLI (`bin/skillsmith.ts`) liest die Server-Adresse aus der Ausgabe von `opencode serve` und sendet dann `GET /agent`, um das Plugin zu laden; danach startet die Weboberfläche. `opencode serve` wird mit `--port 0` gestartet (opencode wählt einen freien Port und meldet ihn).
 
 ## 6. Portierung auf opencode v2
 
@@ -340,7 +356,7 @@ E2E (`test/e2e/run.ts`): isoliertes HOME, v1-Store als Ausgangslage, globales `m
 - Neue aktive Skills erscheinen in opencodes Skill-Liste erst nach Neustart.
 - Embeddings optional; alle semantischen Funktionen (Suche, Hinweise, Kandidaten, Duplikate, Fehler, Curator-Cluster, Projekt-Doku, Widerspruchs-Check, Tags, frühere Sessions) haben einen BM25-/lexikalischen Weg.
 - Gym (A/B-Prüfung, ob Einträge wirklich helfen): geplant, noch nicht umgesetzt.
-- Pipeline und Agenten-Aufträge laufen im opencode-Prozess; ohne laufendes opencode passiert nichts (unterbrochene Läufe werden beim Start markiert).
+- Pipeline und Agenten-Aufträge laufen im opencode-Prozess; ohne laufendes opencode passiert nichts (unterbrochene Läufe werden beim Start markiert). Die Standalone-CLI (`bin/skillsmith.ts`) hält dafür `opencode serve` headless am Laufen – Voraussetzung bleibt ein opencode-Prozess, nur ohne TUI.
 - Board-Reihenfolge und Arbeitsstände sind lokal (kein Commit); Kurz-IDs der Aufgaben zählen je Store.
 - Arbeitsstände/Ergebnisse sind pro Rechner (state/); Team-Sync wäre ein eigener Schritt.
 - macOS-Sandbox nur via `sandbox-exec` (von Apple als veraltet markiert, funktioniert aber); Selbsttest schützt vor stillen Fehlern.

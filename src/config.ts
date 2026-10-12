@@ -351,6 +351,12 @@ export interface Options {
   debug: boolean
 }
 
+/** "1"/"true"/"yes"/"on" (any case) → true, everything else → false. For env flags. */
+export function envFlag(value: string | undefined): boolean {
+  if (value === undefined) return false
+  return /^(1|true|yes|on)$/i.test(value.trim())
+}
+
 export function defaultStoreDir(env: NodeJS.ProcessEnv = process.env): string {
   if (env.SKILLSMITH_HOME) return expandHome(env.SKILLSMITH_HOME)
   const base = env.XDG_DATA_HOME && isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : join(homedir(), ".local", "share")
@@ -871,6 +877,14 @@ export function resolveOptions(raw: unknown, env: NodeJS.ProcessEnv = process.en
   if (env.SKILLSMITH_DISABLED === "1") options.enabled = false
   if (env.SKILLSMITH_DEBUG === "1") options.debug = true
   if (env.SKILLSMITH_EMBEDDINGS === "0") options.embedding.enabled = false
+  // standalone CLI: environment wins over the config file, so `skillsmith start` and the plugin agree
+  if (env.SKILLSMITH_STORE_DIR) options.storeDir = expandHome(env.SKILLSMITH_STORE_DIR)
+  if (env.SKILLSMITH_WEB_AUTOSTART !== undefined) options.web.autostart = envFlag(env.SKILLSMITH_WEB_AUTOSTART)
+  if (env.SKILLSMITH_WEB_HOST) options.web.host = env.SKILLSMITH_WEB_HOST
+  if (env.SKILLSMITH_WEB_PORT) {
+    const p = Number(env.SKILLSMITH_WEB_PORT)
+    if (Number.isInteger(p) && p > 0 && p <= 65535) options.web.port = p
+  }
   options.storeDir = resolve(expandHome(options.storeDir))
   for (const [label, o] of [
     ["", options],

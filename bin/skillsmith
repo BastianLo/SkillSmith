@@ -1,0 +1,13 @@
+#!/usr/bin/env node
+/**
+ * Launcher for the skillsmith CLI. Keeps the command name free of a file extension while
+ * the implementation stays in skillsmith.ts (Node strips the types natively).
+ * Symlink-safe: resolves its own real path before importing the sibling module.
+ */
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { realpathSync } from "node:fs"
+
+const here = dirname(realpathSync(fileURLToPath(import.meta.url)))
+const { main } = await import(join(here, "skillsmith.ts"))
+process.exit(await main(process.argv.slice(2)))

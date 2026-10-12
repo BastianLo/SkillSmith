@@ -294,6 +294,99 @@ Die Live-Ansicht zeigt den Baum aus Agent und Subagenten mit Status, laufendem W
 
 Jede Aktion läuft durch dieselben Prüfungen wie bei den Agenten (Validierung, Geheimnis-Scan, Versionsprüfung), ist **ein Lauf mit höchstens einem Commit** (`<smith>(web): …`) und steht im Audit-Log; „Rückgängig“ nimmt den Lauf per `git revert` zurück. Lokale Daten (Arbeitsstände, Läufe, Reihenfolge) bekommen keinen Commit, aber ein Vorher/Nachher im Audit-Log. Der Server nimmt nur `127.0.0.1` und `localhost` als Host an (DNS-Rebinding), verlangt den Schlüssel im Header, bei Schreibzugriffen die eigene Herkunft (CSRF) und JSON, lädt nichts von außen (strenge Content-Security-Policy). Jeder Wert ist eine Option; die Schlüsselpflicht lässt sich mit `"web": { "token": false }` abschalten – dann kann jeder Prozess auf diesem Rechner lesen und schreiben, die Oberfläche zeigt „ohne Token“; Agenten starten/freigeben und Pipeline-Befehle ändern verlangen den Schlüssel trotzdem (`tasks.requireToken`, `pipeline.requireToken`). „Schreiben sperren“ in den Einstellungen sperrt bis zum Neustart, `web.readOnly` dauerhaft.
 
+## Eigenständige Anwendung (CLI)
+
+skillsmith ist weiterhin ein opencode-Plugin, lässt sich aber auch als **eigenständige Anwendung** starten – ohne dass ein opencode-Fenster offen bleiben muss. Die CLI startet im Hintergrund `opencode serve` (headless, ohne TUI); darin läuft der skillsmith-Server-Hook, also Weboberfläche, Hintergrund-Reviewer, Curator, Doktor und Pipeline. Der Arbeitsplatz unter `/smith-web` bleibt zusätzlich innerhalb einer normalen opencode-TUI verfügbar und unverändert.
+
+> **Hinweis zum Laden:** `opencode serve` lädt Plugins **lazy** – der Server-Hook feuert erst, wenn ein API-Request eintrifft. Die CLI liest deshalb die Server-Adresse aus der Ausgabe von `opencode serve` und sendet dann einen Request (`GET /agent`), um das Plugin zu laden; erst danach startet die Weboberfläche.
+
+### Voraussetzungen
+
+- Node **≥ 22.6** (native TypeScript-Typentfernung) – es werden keine npm-Abhängigkeiten installiert.
+- `opencode` im `PATH` (oder `--opencode <bin>` / `SKILLSMITH_OPENCODE_BIN`).
+
+### Installation
+
+Die CLI ist eine ausführbare Datei `bin/skillsmith`. Am einfachsten als Symlink in ein `PATH`-Verzeichnis legen:
+
+```bash
+ln -sf <repo>/bin/skillsmith ~/Tools/skillsmith
+# oder:
+npm link
+```
+
+Danach genügt `skillsmith <befehl>`.
+
+### Befehle
+
+| Befehl | Zweck |
+|---|---|
+| `skillsmith run` | im Vordergrund starten (Strg-C beendet) |
+| `skillsmith start` | im Hintergrund starten |
+| `skillsmith stop` | Hintergrund-Instanz beenden |
+| `skillsmith restart` | `stop`, dann `start` |
+| `skillsmith status` | Status und Adresse der Weboberfläche (Exit-Code 0 = läuft, 3 = gestoppt) |
+| `skillsmith url` | Link zur Weboberfläche (mit Zugangsschlüssel/Token) |
+| `skillsmith logs` | skillsmith-Log verfolgen (`tail -f`) |
+| `skillsmith enable` | als launchd-Dienst registrieren (macOS; überlebt Neustart/Login) |
+| `skillsmith disable` | launchd-Dienst entfernen |
+| `skillsmith --help` | Hilfe |
+
+### Optionen
+
+| Option | Bedeutung |
+|---|---|
+| `--store <dir>` | Store-Verzeichnis (Standard: siehe Store-Auflösung) |
+| `--port <n>` | Port der Weboberfläche (Standard 4747) |
+| `--host <h>` | Adresse der Weboberfläche (Standard `127.0.0.1`) |
+| `--opencode <bin>` | opencode-Binary/Wrapper (Standard: `opencode` aus `PATH`) |
+| `--verbose`, `-v` | opencode-Logs zusätzlich ausgeben |
+| `--help`, `-h` | Hilfe |
+
+### Umgebungsvariablen
+
+| Variable | Bedeutung |
+|---|---|
+| `SKILLSMITH_STORE_DIR` bzw. `SKILLSMITH_HOME` | Store-Verzeichnis |
+| `SKILLSMITH_WEB_PORT` | Port der Weboberfläche |
+| `SKILLSMITH_WEB_HOST` | Adresse der Weboberfläche |
+| `SKILLSMITH_WEB_AUTOSTART` | Weboberfläche mit dem Prozess starten |
+| `SKILLSMITH_OPENCODE_BIN` | opencode-Binary/Wrapper |
+
+Diese Werte überschreiben die Konfigurationsdatei, damit CLI und Plugin denselben Store und dieselbe Adresse verwenden.
+
+### Store-Auflösung
+
+Die CLI stimmt mit dem Plugin überein. Reihenfolge:
+
+1. `--store <dir>`
+2. `SKILLSMITH_STORE_DIR`
+3. `SKILLSMITH_HOME`
+4. `storeDir` aus der skillsmith-Plugin-Option in opencodes Config (`opencode.jsonc`/`opencode.json`)
+5. Standard `~/.local/share/skillsmith`
+
+Das opencode-Binary wird in dieser Reihenfolge gesucht: `--opencode` → `SKILLSMITH_OPENCODE_BIN` → `opencode` aus dem `PATH`.
+
+Die gefundene Datei muss kein ausführbares Programm sein: Ist sie eine Pointer-/Wrapper-Datei ohne Shebang (einzeiliger Text, der auf eine andere Datei zeigt), folgt die CLI dem Ziel bzw. startet sie über die Shell – ein `spawn ENOEXEC` beim Start bedeutet also nur, dass die `opencode`-Datei im `PATH` kein Programm ist, und die CLI kommt damit zurecht. Alternativ `--opencode`/`SKILLSMITH_OPENCODE_BIN` direkt auf das echte Binary oder das Skript setzen.
+
+### launchd: `enable` / `disable`
+
+`skillsmith enable` registriert unter macOS einen LaunchAgent `com.skillsmith.agent` in `~/Library/LaunchAgents/`. launchd startet **die CLI** (`skillsmith run`, also Node + `bin/skillsmith.ts`), nicht opencode direkt – nur so läuft der Lazy-Load-Trigger. `RunAtLoad` und `KeepAlive` starten nach Login bzw. Absturz neu. Store, Port und opencode-Binary werden als `EnvironmentVariables` in der Plist festgehalten; das Log liegt unter `<store>/state/log/opencode.out`. `skillsmith disable` entfernt den Dienst wieder.
+
+Im Hintergrundbetrieb schreibt `start` eine PID-Datei `<store>/state/cli.json`; `stop` beendet die Prozessgruppe (SIGTERM, dann SIGKILL).
+
+### Beispiel
+
+```bash
+skillsmith start                 # im Hintergrund starten
+skillsmith status                # Status und Adresse
+skillsmith url                   # Link öffnen
+skillsmith enable                # überlebt Neustart/Login (macOS)
+skillsmith disable               # Dienst wieder entfernen
+```
+
+---
+
 ## Suche, Tags und Hinweise
 
 - **Volltextsuche (BM25F)** über alle Arten, ohne Datenbank: Deutsch/Englisch, Umlaute (`ü` = `ue`), Wortanfänge/Komposita. Gewichtet werden Name/Titel, Beschreibung, **Tags**, Überschriften und Text (Glossar: Abkürzung und Aliase am stärksten).
@@ -617,10 +710,11 @@ Ungültige Werte werden ignoriert (Standardwert) und im Log gemeldet.
     ├── pipeline/<projekt>/  agent-jobs/  worktrees/  ← Pipeline-Läufe mit Log, Agenten-Aufträge, Worktrees
     ├── board.json  rule-candidates.json  web-visit.json  exports/
     ├── web.json                            ← laufende Weboberfläche (Port, Schlüssel)
+    ├── cli.json                            ← vom CLI gestartete Hintergrund-Instanz (PID, Store, opencode)
     ├── history.json                        ← Kurzfassung bewerteter Sessions (geschwärzt)
     ├── usage.json errors.json model.json python.json curator.json
     ├── journal.jsonl shadow.jsonl outdated-docs.jsonl
-    └── log/skillsmith.log
+    └── log/skillsmith.log  log/opencode.out
 ```
 
 Alle Dateien sind Markdown mit Frontmatter und können von Hand bearbeitet werden.
