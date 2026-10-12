@@ -389,6 +389,8 @@ describe("read tools", () => {
     expect(err).toContain("maven-pkix")
     expect(err).toContain("keytool")
     expect(await tools.script_search.execute({ query: "csv" }, tc)).toContain("No Skripte")
+    expect(await tools.knowledge_list.execute({}, tc)).toContain("billing-api")
+    expect(await tools.script_list.execute({}, tc)).toContain("Keine Skripte-Einträge")
     // write tools refuse outside background runs and across smiths
     expect(await tools.docsmith_glossary_upsert.execute({ term: "X", expansion: "y", description: "z" }, tc)).toContain("only available")
     const run = makeRun(ctx, "reviewer", { smith: "errorsmith" })

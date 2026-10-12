@@ -4,11 +4,11 @@ skillsmith ist ein opencode-Plugin mit fünf „Smiths“ und einem „Doktor“
 
 | Smith | pflegt | Werkzeuge für Ihren Agenten |
 |---|---|---|
-| **skillsmith** | **Skills** – Vorgehensweisen (wie macht man X richtig in Ihrer Umgebung) | `skill_search`, `skill_read` |
-| **docsmith** | **Wissensdatenbank** (Fakten zu Systemen, Projekten, Daten, Schnittstellen, Konventionen) und **Glossar** (Abkürzung · wörtliche Bedeutung · Kurzbeschreibung); durchsucht außerdem die `.md`-Doku Ihres Projekts | `knowledge_search`, `knowledge_read`, `glossary_lookup`, `docs_search` |
-| **errorsmith** | **Fehler mit Lösungsweg** – schlägt ein Befehl erneut mit einem bekannten Fehler fehl, hängt skillsmith die Lösung direkt an die Ausgabe | `error_lookup` |
-| **toolsmith** | **Python-Skripte** – automatisierbare Lösungswege werden zu getesteten Skripten (Python 3.9, Standardbibliothek) | `script_search`, `script_read` |
-| **memorysmith** | **Erinnerungen** an *Ihre* Projekte – Entscheidungen, Vorgaben, Erfahrungen, der Arbeitsstand jedes Branches und Ergebnisse von Subagenten; eine neue Session beginnt mit dem Stand | `memory_search`, `memory_read` |
+| **skillsmith** | **Skills** – Vorgehensweisen (wie macht man X richtig in Ihrer Umgebung) | `skill_search`, `skill_list`, `skill_read` |
+| **docsmith** | **Wissensdatenbank** (Fakten zu Systemen, Projekten, Daten, Schnittstellen, Konventionen) und **Glossar** (Abkürzung · wörtliche Bedeutung · Kurzbeschreibung); durchsucht außerdem die `.md`-Doku Ihres Projekts | `knowledge_search`, `knowledge_list`, `knowledge_read`, `glossary_lookup`, `glossary_list`, `docs_search` |
+| **errorsmith** | **Fehler mit Lösungsweg** – schlägt ein Befehl erneut mit einem bekannten Fehler fehl, hängt skillsmith die Lösung direkt an die Ausgabe | `error_lookup`, `error_list` |
+| **toolsmith** | **Python-Skripte** – automatisierbare Lösungswege werden zu getesteten Skripten (Python 3.9, Standardbibliothek) | `script_search`, `script_list`, `script_read` |
+| **memorysmith** | **Erinnerungen** an *Ihre* Projekte – Entscheidungen, Vorgaben, Erfahrungen, der Arbeitsstand jedes Branches und Ergebnisse von Subagenten; eine neue Session beginnt mit dem Stand | `memory_search`, `memory_list`, `memory_read` |
 | **Doktor** | **Bezüge und Widersprüche** zwischen allen Einträgen – verknüpft Verwandtes (Art, Stärke, Beschreibung), führt Duplikate zusammen, korrigiert klar veraltetes Wissen, legt Ihnen echte Widersprüche vor | `graph_neighbors` |
 
 Die vier ersten Smiths sammeln **allgemeines**, wiederverwendbares Wissen; memorysmith merkt sich das **Spezifische** („in *diesem* Projekt haben wir uns für X entschieden“, „auf Branch T2-77 ist noch offen …“). Alles ist über den Wissensgraphen verbunden.
@@ -414,6 +414,7 @@ Ist in Ihrem LiteLLM ein Embedding-Modell verfügbar, wird es automatisch genutz
 | Wo | Was sich ändert |
 |---|---|
 | **Such-Werkzeuge** (`skill_search`, `knowledge_search`, `glossary_lookup`, `error_lookup`, `script_search`) und `/skills-search`, `/knowledge`, `/errors`, `/scripts` | BM25 und Vektorsuche werden per Reciprocal Rank Fusion kombiniert: „Wie bringe ich den Dienst in Produktion?“ findet die Deployment-Checkliste, auch ohne gemeinsames Wort |
+| **Listen-Werkzeuge** (`skill_list`, `knowledge_list`, `glossary_list`, `error_list`, `script_list`, `memory_list`) | listen alle Einträge einer Art gruppiert nach Stufe (aktiv, ruhend; archiviert nur mit `include_archived: true`) mit optionalem `tags`-Filter; die Slash-Befehle `/smith-list` etc. bleiben daneben bestehen |
 | **Hinweise pro Nachricht** | zusätzlich Treffer mit Ähnlichkeit ≥ `hintMinSimilarity`; der Hinweis wird parallel berechnet und wartet höchstens `hintWaitMs` (sonst BM25) |
 | **Kandidaten** | dasselbe Muster in anderen Worten zählt als derselbe Kandidat (≥ `candidateSimilarity`) – der Wiederholungsnachweis greift zuverlässiger |
 | **Duplikat-Sperre** | ein Hintergrund-Agent darf keinen Eintrag anlegen, der einem bestehenden fast gleicht (≥ `duplicateSimilarity`); er bekommt den Namen des vorhandenen Eintrags zum Aktualisieren |
@@ -522,6 +523,8 @@ Pro Smith überschreibbar, z. B. `"toolsmith": { "writeMode": "stage" }`. docsmi
 | `/doc <thema> [\| vorlage]` | docsmith schreibt aus dieser Session einen Entwurf als Ihr Dokument |
 
 Bei `[art]` gehen auch: `skill(s)`, `wissen`, `doku`, `glossar`, `abk`, `fehler`, `error(s)`, `skript(e)`, `script(s)`, `erinnerung(en)`, `memory`. Ist der Name eindeutig, kann die Art entfallen.
+
+Die Listen-Befehle (`/smith-list`, `/knowledge`, `/glossary`, `/errors`, `/scripts`, `/memory`) bleiben unverändert. Zusätzlich gibt es für Agenten die entsprechenden Listen-Werkzeuge (`skill_list`, `knowledge_list`, `glossary_list`, `error_list`, `script_list`, `memory_list`) – sie liefern dieselben Einträge als Tool-Ausgabe, ohne die Befehle zu ersetzen.
 
 ---
 

@@ -1,9 +1,10 @@
 /**
  * Tools of all smiths.
- *  - read tools (main agent + background agents): skill_search, skill_read,
- *    knowledge_search, knowledge_read, glossary_lookup, error_lookup,
- *    script_search, script_read, docs_search (project .md files),
- *    history_search (earlier sessions), memory_search, memory_read,
+ *  - read tools (main agent + background agents): skill_search, skill_list,
+ *    skill_read, knowledge_search, knowledge_list, knowledge_read,
+ *    glossary_lookup, glossary_list, error_lookup, error_list, script_search,
+ *    script_list, script_read, docs_search (project .md files),
+ *    history_search (earlier sessions), memory_search, memory_list, memory_read,
  *    graph_neighbors (memories and relations)
  *  - write tools (only inside background runs of the matching smith):
  *    skillsmith_*, docsmith_*, errorsmith_*, toolsmith_*, memorysmith_*, doctor_*
@@ -26,16 +27,22 @@ import { buildArgs, type ArgSpecs } from "./schema"
 
 export const READ_TOOLS = [
   "skill_search",
+  "skill_list",
   "skill_read",
   "knowledge_search",
+  "knowledge_list",
   "knowledge_read",
   "glossary_lookup",
+  "glossary_list",
   "error_lookup",
+  "error_list",
   "script_search",
+  "script_list",
   "script_read",
   "docs_search",
   "history_search",
   "memory_search",
+  "memory_list",
   "memory_read",
   "graph_neighbors",
 ] as const
@@ -122,6 +129,50 @@ export function formatGlossary(e: Entry, withNotes = true): string {
   if (e.tags.length) lines.push(`  tags: ${e.tags.join(", ")}`)
   if (withNotes && e.body.trim()) lines.push(`  ${truncate(e.body.trim().replace(/\n+/g, " "), 400)}`)
   return lines.join("\n")
+}
+
+/** Arg specs shared by all list tools: no query, archive off by default (search uses a different default). */
+const listSpecs = (what: string): ArgSpecs => ({
+  include_archived: { kind: "boolean", description: `Also list archived ${what} (default false)`, optional: true },
+  tags: { kind: "string[]", description: "Only entries carrying all of these tags", optional: true },
+  limit: { kind: "number", description: "Max entries per tier (default 100)", optional: true },
+})
+
+/** Visible entries of a kind (AI view: private entries never appear), tier/tag filtered, sorted by name. */
+function listEntries(ctx: Ctx, kind: Kind, args: any, filter?: (e: Entry) => boolean): Entry[] {
+  const tiers = tiersFor(kind, bool(args.include_archived))
+  const tags = list(args.tags)
+  const base = aiStoreOf(ctx).list(kind)
+  // store.list does not contain foreign skills; skill_list merges them (read-only), private ones left out
+  const all = kind === "skill" ? [...base, ...ctx.store.listForeign().filter((e) => !isPrivate(e))] : base
+  return all
+    .filter((e) => tiers.includes(e.tier) && tags.every((t) => e.tags.includes(t)) && (!filter || filter(e)))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+/** One line per entry – like hitLine, but for an Entry (no score). */
+function entryLine(e: Entry, i: number, extra = ""): string {
+  const title = e.title && e.title !== e.name ? ` – ${truncate(e.title, 100)}` : ""
+  return `${i + 1}. ${e.name} [${tierLabel(e.tier)}${e.owned ? "" : " · read-only"}]${e.meta?.pinned ? " 📌" : ""}${title} – ${truncate(e.description, 200)}${
+    e.tags.length ? ` {${e.tags.slice(0, 6).join(", ")}}` : ""
+  }${extra}`
+}
+
+/** Grouped, limited output (analogous to listKind): one head per tier + "… N weitere". */
+function formatList(kind: Kind, entries: Entry[], opts: { line?: (e: Entry, i: number) => string; perTier?: number } = {}): string {
+  const perTier = Math.max(1, Number(opts.perTier) || 100)
+  const order: Array<Tier | "foreign"> = [...spec(kind).tiers, ...(kind === "skill" ? (["foreign"] as Array<Tier | "foreign">) : [])]
+  const line = opts.line ?? ((e: Entry, i: number) => entryLine(e, i))
+  const lines: string[] = []
+  for (const t of order) {
+    const items = entries.filter((e) => e.tier === t)
+    if (!items.length) continue
+    lines.push(`**${spec(kind).labelPlural} – ${tierLabel(t)} (${items.length})**`)
+    items.slice(0, perTier).forEach((e, i) => lines.push(line(e, i)))
+    if (items.length > perTier) lines.push(`- … ${items.length - perTier} weitere`)
+    lines.push("")
+  }
+  return lines.join("\n").trim() || `Keine ${spec(kind).labelPlural}-Einträge.`
 }
 
 function section(body: string, re: RegExp): string | undefined {
@@ -244,6 +295,12 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
       },
     ),
 
+    skill_list: def(
+      "List all skills of a kind, grouped by tier (active, dormant, and with include_archived also archived), including foreign read-only skills. Optional tags filter (all must match). Does not replace /smith-list – use skill_read to load one.",
+      listSpecs("skills"),
+      async (args) => formatList("skill", listEntries(ctx, "skill", args), { perTier: Number(args.limit) || 100, line: (e, i) => entryLine(e, i, e.source ? ` · ${e.source}` : "") }),
+    ),
+
     knowledge_search: def(
       "Full-text search in the knowledge base (documentation about the user's systems, projects, data, interfaces and conventions, maintained by docsmith). Load a result with knowledge_read.",
       searchSpecs("system, component, topic, identifier, keywords"),
@@ -282,6 +339,16 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
       },
     ),
 
+    knowledge_list: def(
+      "List all knowledge base entries, grouped by tier (active, and with include_archived also archived). Optional tags filter (all must match). Does not replace /knowledge – use knowledge_read to read one.",
+      listSpecs("knowledge entries"),
+      async (args) =>
+        formatList("knowledge", listEntries(ctx, "knowledge", args), {
+          perTier: Number(args.limit) || 100,
+          line: (e, i) => entryLine(e, i, `${e.folder ? ` · Ordner: ${e.folder}` : ""}${e.meta?.doubts?.length ? " · ⚠ Widerspruch" : ""}`),
+        }),
+    ),
+
     glossary_lookup: def(
       "Look up abbreviations and terms in the glossary (full-text: abbreviation, literal meaning and description). Returns every meaning with its short description.",
       {
@@ -307,6 +374,16 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
         for (const e of exact) used(context, "glossary", e.name)
         return entries.map((e) => formatGlossary(e)).join("\n\n")
       },
+    ),
+
+    glossary_list: def(
+      "List all glossary entries, one line each (TERM = meaning · also alias), grouped by tier. Optional tags filter (all must match). Does not replace /glossary – use glossary_lookup to look one up.",
+      listSpecs("glossary entries"),
+      async (args) =>
+        formatList("glossary", listEntries(ctx, "glossary", args), {
+          perTier: Number(args.limit) || 100,
+          line: (e, i) => `${i + 1}. ${formatGlossary(e, false).split("\n").map((s) => s.trim().replace(/^•\s*/, "")).filter(Boolean).join(" · ")}`,
+        }),
     ),
 
     error_lookup: def(
@@ -359,6 +436,16 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
       },
     ),
 
+    error_list: def(
+      "List all documented errors, grouped by tier (active, dormant, and with include_archived also archived), with their status (solved/open). Optional tags filter (all must match). Does not replace /errors – use error_lookup to search or read one.",
+      listSpecs("errors"),
+      async (args) =>
+        formatList("error", listEntries(ctx, "error", args), {
+          perTier: Number(args.limit) || 100,
+          line: (e, i) => entryLine(e, i, ` <${fmStr(e.fields.status) || "?"}>`),
+        }),
+    ),
+
     script_search: def(
       "Search the library of tested Python scripts (maintained by toolsmith). Prefer running an existing script over re-implementing the same steps. Read usage with script_read.",
       searchSpecs("task, input/output format, keywords"),
@@ -370,6 +457,16 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
         })
         return out.startsWith("No ") ? out : `${out}\n\nDetails with script_read(name).`
       },
+    ),
+
+    script_list: def(
+      "List all tested Python scripts, grouped by tier (active, dormant, and with include_archived also archived), with usage and test status. Optional tags filter (all must match). Does not replace /scripts – use script_read for details.",
+      listSpecs("scripts"),
+      async (args) =>
+        formatList("script", listEntries(ctx, "script", args), {
+          perTier: Number(args.limit) || 100,
+          line: (e, i) => entryLine(e, i, `\n   usage: ${truncate(fmStr(e.fields.usage), 160)}${e.meta?.test?.status ? ` · tests: ${e.meta.test.status}` : ""}`),
+        }),
     ),
 
     docs_search: def(
@@ -1023,7 +1120,7 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
         const target = [args?.name, args?.term, args?.id, args?.from, args?.topic, args?.title].find((x) => typeof x === "string" && x.trim())
         context.__target = target ? truncate(String(target).trim(), 120) : undefined
       }
-      if (!/_(search|lookup)$/.test(name) || !ctx.metrics) return execute(args, context)
+      if (!/_(search|lookup|list)$/.test(name) || !ctx.metrics) return execute(args, context)
       // search metrics: duration and number of hits (never the query)
       const started = Date.now()
       return execute(args, context).then((out) => {
@@ -1122,6 +1219,26 @@ function memoryTools(ctx: Ctx, def: Def, withRun: WithRun, used: Used, evidenceS
         }
         if (!lines.length) return `No memory matches "${truncate(query, 80)}".`
         return `${lines.length} result(s):\n${lines.map((l, i) => `${i + 1}. ${l}`).join("\n")}\n\nRead one with memory_read(id).`
+      },
+    ),
+
+    memory_list: def(
+      "List durable memories of this project and global ones (decisions, conventions, experiences), grouped by tier. Foreign projects only with all_projects. Volatile work states and results are not listed here. Optional tags filter (all must match). Does not replace /memory – use memory_read for details.",
+      {
+        ...listSpecs("memories"),
+        all_projects: { kind: "boolean", description: "Also list memories of other projects (default false)", optional: true },
+      },
+      async (args) => {
+        const all = bool(args.all_projects) || ctx.options.memorysmith.crossProject
+        const scope = ctx.scope()
+        const entries = listEntries(ctx, "memory", args, (e) => {
+          const p = fmStr(e.fields.project)
+          return !p || p === scope.project || all
+        })
+        return formatList("memory", entries, {
+          perTier: Number(args.limit) || 100,
+          line: (e, i) => `${i + 1}. ${memoryLine(e)} (topic ${fmStr(e.fields.topic)})`,
+        })
       },
     ),
 

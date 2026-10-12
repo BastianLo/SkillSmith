@@ -559,6 +559,8 @@ const mainScript = (r: MockRequest): MockReply => {
       { name: "knowledge_search", args: { query: "Kundendaten Quelle" } },
       { name: "error_lookup", args: { query: "PKIX path building failed" } },
       { name: "script_read", args: { name: "count-csv-values" } },
+      { name: "knowledge_list", args: {} },
+      { name: "script_list", args: {} },
     ]
     if (after < calls.length) return { tools: [calls[after]] }
     return { text: "read everything" }
@@ -763,7 +765,7 @@ try {
   const mainTools = toolNames(lastMain)
   check(
     "main agent sees all read tools but no write tools",
-    ["skill_search", "knowledge_search", "glossary_lookup", "error_lookup", "script_search", "docs_search", "history_search", "memory_search", "memory_read", "graph_neighbors"].every((t) => mainTools.includes(t)) &&
+    ["skill_search", "skill_list", "knowledge_search", "knowledge_list", "glossary_lookup", "glossary_list", "error_lookup", "error_list", "script_search", "script_list", "docs_search", "history_search", "memory_search", "memory_list", "memory_read", "graph_neighbors"].every((t) => mainTools.includes(t)) &&
       !mainTools.some((t) => /^(skillsmith|docsmith|errorsmith|toolsmith|memorysmith|doctor)_/.test(t)),
   )
 

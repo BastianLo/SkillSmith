@@ -392,6 +392,7 @@ describe("stand block, hints, review routing", () => {
     expect(WRITE_TOOL_PREFIXES).toContain("memorysmith_")
     expect(WRITE_TOOL_PREFIXES).toContain("doctor_")
     expect(READ_TOOLS).toContain("memory_read")
+    for (const t of ["skill_list", "knowledge_list", "glossary_list", "error_list", "script_list", "memory_list"]) expect(READ_TOOLS).toContain(t)
     expect(READ_TOOLS.some((t) => WRITE_TOOL_PREFIXES.some((p) => t.startsWith(p)))).toBe(false)
   })
 })
@@ -442,6 +443,53 @@ describe("read tools and commands", () => {
     expect(ctx.store.getOwned("memory", "shop-vorgabe-deploy-tag")?.tier).toBe("archive")
     expect(await handleCommand(ctx, deps, "forget", stateId(TEST_SCOPE.project, TEST_SCOPE.branch!), "ses_u")).toContain("verworfen")
     expect(ctx.mem!.state(TEST_SCOPE.project, TEST_SCOPE.branch!)).toBeUndefined()
+  })
+})
+
+describe("list tools", () => {
+  test("private entries stay hidden, tags filter is AND, archive is opt-in, memory is project filtered", async () => {
+    const ctx = makeCtx()
+    const doc = cmdRun(ctx, "docsmith")
+    await ctx.ops.create(doc, "knowledge", { name: "public-doc", title: "Public", description: "sichtbar", tags: ["a", "b"], body: "x" })
+    await ctx.ops.create(doc, "knowledge", { name: "tag-a-only", title: "A", description: "nur a", tags: ["a"], body: "x" })
+    await ctx.ops.create(doc, "knowledge", { name: "geheim", title: "Geheim", description: "privat", tags: ["a", "b"], body: "x", fields: { ai: "privat" } })
+    await ctx.ops.create(doc, "knowledge", { name: "alt", title: "Alt", description: "archiviert", body: "x" })
+    await ctx.ops.move(cmdRun(ctx, "docsmith"), "knowledge", { name: "alt", to: "archive", kind: "archive", reason: "test" })
+
+    const cmd = cmdRun(ctx, "memorysmith")
+    await ctx.ops.memorySave(cmd, { type: "vorgabe", topic: "hier", title: "Hier gilt es", summary: "hier", body: "x", where })
+    await ctx.ops.memorySave(cmd, { type: "vorgabe", topic: "global", title: "Global gilt es", summary: "global", body: "x", scope: "global", where })
+    await ctx.ops.memorySave(cmd, { type: "vorgabe", topic: "fremd", title: "Nur im anderen Projekt", summary: "fremd", body: "x", where: { ...where, project: "github.com/other/x" } })
+
+    const tools = createTools(ctx, null)
+    const tc = { sessionID: "ses_main" }
+
+    // (a) AI-Recht privat never reaches a list tool
+    const kl = await tools.knowledge_list.execute({}, tc)
+    expect(kl).toContain("public-doc")
+    expect(kl).not.toContain("geheim")
+
+    // (c) tags filter is an AND
+    const tagged = await tools.knowledge_list.execute({ tags: ["a", "b"] }, tc)
+    expect(tagged).toContain("public-doc")
+    expect(tagged).not.toContain("tag-a-only")
+
+    // (d) archive only with include_archived
+    expect(kl).not.toContain("alt")
+    const withArchive = await tools.knowledge_list.execute({ include_archived: true }, tc)
+    expect(withArchive).toContain("alt")
+    expect(withArchive).toContain("archiviert")
+
+    // (b) memory_list: current project + global, not a foreign project; with all_projects: true it appears
+    const ml = await tools.memory_list.execute({}, tc)
+    expect(ml).toContain("Hier gilt es")
+    expect(ml).toContain("Global gilt es")
+    expect(ml).not.toContain("Nur im anderen Projekt")
+    const mlAll = await tools.memory_list.execute({ all_projects: true }, tc)
+    expect(mlAll).toContain("Nur im anderen Projekt")
+    // volatile states/results are not listed
+    expect(ml).not.toContain("state:")
+    expect(ml).not.toContain("result:")
   })
 })
 
