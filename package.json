@@ -1,0 +1,20 @@
+{
+  "name": "skillsmith",
+  "version": "3.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Self-maintaining knowledge for opencode: skills (skillsmith), knowledge base + glossary (docsmith), errors with fixes (errorsmith), tested Python scripts (toolsmith), project memories (memorysmith), relations and conflicts (doctor); a local web workplace (knowledge base with editor and [[links]], tasks and kanban board, projects with pipeline, agent tasks with proposal/approval in git worktrees, audit log, metrics and statistics) – background reviewers, curator, hybrid search, git-tracked changes.",
+  "license": "MIT",
+  "scripts": {
+    "test": "bun test test/unit",
+    "typecheck": "tsc --noEmit",
+    "e2e": "bun test/e2e/run.ts",
+    "demo": "bun test/web/demo.ts"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.18.35",
+    "@opencode-ai/sdk": "1.18.35",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0"
+  }
+}
