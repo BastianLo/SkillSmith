@@ -124,6 +124,15 @@ export const BUILTIN_JOBS: JobDef[] = [
     run: (ctx, jr) => ctx.anchors!.runJob(jr.trigger, jr.trigger === "von Hand"),
   },
   {
+    id: "gym",
+    label: "Gym",
+    description: "A/B-Läufe: dieselbe Aufgabe ohne und mit Eintrag, mehrere Läufe je Arm; Urteil hilft, neutral, schadet oder ungenutzt (mit Modell).",
+    area: "gym",
+    defaults: () => ({ idleMin: 30, catchUp: "skip" }),
+    unavailable: (ctx) => (!ctx.options.gym.enabled ? "Gym ist aus" : !ctx.gym?.tasks().some((t) => t.status === "aktiv") ? "keine aktiven Gym-Aufgaben" : undefined),
+    run: (ctx, jr) => ctx.gym!.runJob(jr.trigger),
+  },
+  {
     id: "prune",
     label: "Aufräumen",
     description: "Alte Logs, Audit-Ereignisse und Metriken nach den Aufbewahrungsfristen löschen; alte Session-Zustände entfernen.",

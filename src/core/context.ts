@@ -4,6 +4,8 @@ import type { Client } from "./agent-runner"
 import type { AgentTasks } from "./agent-tasks"
 import type { Anchors } from "./anchors"
 import type { QualityEngine } from "./quality"
+import type { CrossCheck } from "./crosscheck"
+import type { Gym } from "./gym"
 import type { AuditLog } from "./audit"
 import type { EventBus } from "./bus"
 import type { Doctor } from "./doctor"
@@ -91,6 +93,10 @@ export interface Ctx {
   anchors?: Anchors
   /** quality score per entry (5c) */
   quality?: QualityEngine
+  /** cross-check of AI-written paragraphs (5d) */
+  crosscheck?: CrossCheck
+  /** A/B runs: does an entry help the agents? (5d) */
+  gym?: Gym
   /** tasks delegated to opencode agents */
   agentTasks: AgentTasks
   /** review queue and curator of this instance (web actions "review now", "curate") */

@@ -22,7 +22,8 @@ import type { Scope } from "./scope"
 import type { Redactor } from "./redact"
 import { lintBody, validateBody, validateDescription, validateName } from "./skill"
 import type { Store } from "./store"
-import { evidenceSource, findParagraph, nextProvenance, paragraphs, PROVENANCE_KINDS } from "./provenance"
+import { evidenceSource, findParagraph, nextProvenance, paragraphs, PROVENANCE_KINDS, type Paragraph } from "./provenance"
+import type { CrossChecker, CheckParagraph } from "./crosscheck"
 import { ClaimedError, StoreError } from "./store"
 
 export class GuardError extends Error {}
@@ -104,6 +105,14 @@ export interface SourceArg {
   ref?: string
 }
 
+/** Result of the anchor / provenance step of a write. */
+interface ContentMeta {
+  warnings: string[]
+  /** changed or new statement paragraphs */
+  changed: Paragraph[]
+  provenance?: Record<string, ProvenanceSource[]>
+}
+
 /** Pins the code anchors of a text (src/core/anchors.ts). */
 export type AnchorPin = (text: string, previous: AnchorRecord[], repin?: string[]) => Promise<{ records: AnchorRecord[]; unresolved: string[] }>
 
@@ -174,6 +183,7 @@ export class Ops {
   readonly shadowFile: string
   private recheck?: ScriptRecheck
   private anchorPin?: AnchorPin
+  private crossChecker?: { applies(run: Run, kind: Kind): boolean; check: CrossChecker }
   private sim?: SimilarityProvider
   private mem?: MemoryDb
   private graph?: Graph
@@ -237,6 +247,32 @@ export class Ops {
     this.anchorPin = fn
   }
 
+  /** cross-check of AI-written paragraphs by a second model (5d) */
+  setCrossCheck(c: { applies(run: Run, kind: Kind): boolean; check: CrossChecker } | undefined): void {
+    this.crossChecker = c
+  }
+
+  /**
+   * Cross-check (5d): returns a stage reason when a paragraph is not supported, throws when one
+   * is contradicted. Only for background agents; the user's writes and approvals are not checked.
+   */
+  private async crossGate(run: Run, kind: Kind, name: string, cm: ContentMeta, approved: boolean): Promise<string | undefined> {
+    if (approved || isUser(run) || !this.crossChecker?.applies(run, kind) || !cm.changed.length) return undefined
+    const paras: CheckParagraph[] = cm.changed.map((p) => ({ index: p.index, text: p.text, sources: cm.provenance?.[p.key] ?? [] }))
+    const r = await this.crossChecker.check(run, kind, name, paras)
+    if (r.error && !r.verdicts.length) return `Kreuzprüfung nicht möglich (${truncate(r.error, 120)})`
+    const bad = r.verdicts.filter((v) => v.verdict === "widersprochen")
+    if (bad.length) {
+      const msg = `cross-check (${r.model}): the source contradicts ${bad.map((v) => `"${truncate(paras.find((p) => p.index === v.index)?.text ?? "", 50)}" – ${v.reason}`).join("; ")}. Do not write what the sources do not say.`
+      ;(run.rejections ??= []).push({ at: nowIso(), target: `${kind}:${name}`, message: msg })
+      throw new GuardError(msg)
+    }
+    const weak = r.verdicts.filter((v) => v.verdict === "nicht_gestuetzt")
+    if (weak.length) return `Kreuzprüfung: ${weak.length} Absatz/Absätze nicht gestützt (${weak.map((v) => truncate(v.reason, 80)).join("; ")})`
+    if (r.error) return `Kreuzprüfung unvollständig (${truncate(r.error, 120)})`
+    return undefined
+  }
+
   /** A source given for one paragraph – verified like evidence (quote) or by its reference in the transcript. */
   private verifySource(run: Run, s: SourceArg, body: string, approved: boolean): ProvenanceSource {
     const at = nowIso()
@@ -267,9 +303,10 @@ export class Ops {
    * Code anchors and provenance of a write (5c): pins new [[code:…]] anchors and carries the
    * sources per paragraph. Mutates metaPatch, returns warnings for the agent.
    */
-  private async contentMeta(run: Run, kind: Kind, body: string, rec: Entry | undefined, metaPatch: Partial<Meta>, sources: SourceArg[] | undefined, approved: boolean, repin?: string[]): Promise<string[]> {
+  private async contentMeta(run: Run, kind: Kind, body: string, rec: Entry | undefined, metaPatch: Partial<Meta>, sources: SourceArg[] | undefined, approved: boolean, repin?: string[]): Promise<ContentMeta> {
     const o = this.o()
     const warnings: string[] = []
+    const result: ContentMeta = { warnings, changed: [] }
     if (o.anchors?.enabled && this.anchorPin && kind !== "project") {
       const prev = rec?.meta?.anchors ?? []
       if (prev.length || body.includes("[[code:")) {
@@ -282,7 +319,7 @@ export class Ops {
         }
       }
     }
-    if (!o.provenance?.enabled || !PROVENANCE_KINDS.includes(kind)) return warnings
+    if (!o.provenance?.enabled || !PROVENANCE_KINDS.includes(kind)) return result
     const paras = paragraphs(body)
     const per = new Map<string, ProvenanceSource[]>()
     for (const s of sources ?? []) {
@@ -295,6 +332,8 @@ export class Ops {
       ? [{ type: "user", at: nowIso(), runId: run.id, scope: "change", ...(approved && run.actor !== "web" ? { ref: "freigabe" } : {}) }]
       : (metaPatch.evidence ?? []).map((ev) => evidenceSource(ev, run.id))
     const next = nextProvenance(body, rec?.meta?.provenance, general, per)
+    result.changed = next.changed
+    result.provenance = next.provenance
     if (JSON.stringify(next.provenance) !== JSON.stringify(rec?.meta?.provenance ?? {})) metaPatch.provenance = next.provenance
     const mode = o.provenance.perParagraph
     if (!user && !approved && mode !== "aus" && next.withoutOwn.length >= 2) {
@@ -302,7 +341,7 @@ export class Ops {
       if (mode === "pflicht") throw new GuardError(`each changed paragraph needs its own source: pass sources [{paragraph, evidence}] for ${list}`)
       warnings.push(`provenance: ${next.withoutOwn.length} changed paragraphs share one evidence – next time pass sources [{paragraph, evidence}] per paragraph`)
     }
-    return warnings
+    return result
   }
 
   /** Pin or re-pin the code anchors of an entry (metadata only; job "anchors", "passt noch"). */
@@ -668,9 +707,11 @@ export class Ops {
       throw new GuardError(`a ${spec(kind).label} entry named "${c.name}" already exists; update it or choose another name`)
     }
     if (!a.approved) await this.duplicateGate(run, kind, c)
-    warnings.push(...(await this.contentMeta(run, kind, c.body, undefined, metaPatch, a.sources, approved)))
+    const cm = await this.contentMeta(run, kind, c.body, undefined, metaPatch, a.sources, approved)
+    warnings.push(...cm.warnings)
+    const crossStage = await this.crossGate(run, kind, c.name, cm, approved)
     const args = { name: c.name, title: c.title, description: c.description, tags: c.tags, fields: c.fields, body: c.body, reason: a.reason, candidateId: a.candidateId || undefined, userQuote: a.userQuote || undefined, evidence: a.evidence || undefined, chainId: a.chainId || undefined, sources: a.sources }
-    const diverted = this.divert(run, "create", kind, c.name, a.reason, args)
+    const diverted = this.divert(run, "create", kind, c.name, a.reason, args, crossStage)
     if (diverted) return diverted
     await this.awaitClaims(
       run,
@@ -752,9 +793,11 @@ export class Ops {
       JSON.stringify(c.tags) !== JSON.stringify(rec.tags) ||
       JSON.stringify(c.fields) !== JSON.stringify(rec.fields)
     if (!changed && !metaPatch.evidence && !a.repinAnchors?.length) return `"${a.name}" unchanged`
-    warnings.push(...(await this.contentMeta(run, kind, c.body, rec, metaPatch, a.sources, approved, a.repinAnchors)))
+    const cm = await this.contentMeta(run, kind, c.body, rec, metaPatch, a.sources, approved, a.repinAnchors)
+    warnings.push(...cm.warnings)
+    const crossStage = proposal ? undefined : await this.crossGate(run, kind, a.name, cm, approved)
     const args = { name: c.name, title: c.title, description: c.description, tags: c.tags, fields: c.fields, body: c.body, reason: a.reason, evidence: a.evidence, sources: a.sources, repinAnchors: a.repinAnchors }
-    const diverted = this.divert(run, action, kind, a.name, a.reason, args, proposal)
+    const diverted = this.divert(run, action, kind, a.name, a.reason, args, proposal ?? crossStage)
     if (diverted) return diverted
     await this.awaitClaims(run, this.claims(kind, a.name), `${kind} "${a.name}"`)
     await this.d.store.update(
@@ -787,8 +830,10 @@ export class Ops {
     }
     if (kind === "knowledge" && rec.meta?.doubts?.length) metaPatch.doubts = undefined
     const patched = rec.body.replace(a.oldText, () => a.newText)
-    const patchWarnings = await this.contentMeta(run, kind, patched, rec, metaPatch, a.sources, !!a.approved || isUser(run))
-    const diverted = this.divert(run, "patch", kind, a.name, a.reason, { name: a.name, oldText: a.oldText, newText: a.newText, reason: a.reason, evidence: a.evidence, sources: a.sources }, proposal)
+    const pcm = await this.contentMeta(run, kind, patched, rec, metaPatch, a.sources, !!a.approved || isUser(run))
+    const patchWarnings = pcm.warnings
+    const crossStage = proposal ? undefined : await this.crossGate(run, kind, a.name, pcm, !!a.approved)
+    const diverted = this.divert(run, "patch", kind, a.name, a.reason, { name: a.name, oldText: a.oldText, newText: a.newText, reason: a.reason, evidence: a.evidence, sources: a.sources }, proposal ?? crossStage)
     if (diverted) return diverted
     await this.awaitClaims(run, this.claims(kind, a.name), `${kind} "${a.name}"`)
     const max = this.maxBody(kind)

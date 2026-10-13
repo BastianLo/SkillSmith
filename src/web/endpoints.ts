@@ -51,6 +51,16 @@ export const ENDPOINTS: Record<string, Endpoint> = {
     const st = ctx.anchors.state()
     return { available: true, checkedAt: st.checkedAt ?? null, files: ctx.anchors.byFile() }
   },
+  // cross-check and gym (5d)
+  crosscheck: (ctx) => ({ enabled: ctx.options.crosscheck.enabled && !!ctx.options.crosscheck.model, model: ctx.options.crosscheck.model || null, stats: ctx.crosscheck?.stats() ?? [] }),
+  gym: (ctx, q) => {
+    if (!ctx.gym) return { available: false, tasks: [], rounds: [] }
+    const entry = q.get("entry")
+    const st = ctx.gym.state()
+    const tasks = ctx.gym.tasks().filter((t) => !entry || t.entry === entry)
+    const rounds = st.rounds.filter((r) => !entry || r.entry === entry).slice(-100).reverse()
+    return { available: true, consequence: ctx.options.gym.consequence, tasks, rounds, suppressed: st.suppressed, archived: st.archived }
+  },
   "code/file": (ctx, q) => {
     const path = q.get("path") ?? ""
     const project = q.get("project") || undefined

@@ -313,6 +313,26 @@ export interface Options {
     /** sources per paragraph from the smiths: aus | warnen (hint to the agent) | pflicht (rejected without) */
     perParagraph: "aus" | "warnen" | "pflicht"
   }
+  crosscheck: {
+    enabled: boolean
+    /** "provider/model" of the checker – a different model than the writer; empty = no cross-check */
+    model: string
+    /** kinds whose AI-written paragraphs are checked */
+    kinds: string[]
+  }
+  gym: {
+    enabled: boolean
+    /** model of both arms ("" = last used model) */
+    model: string
+    /** opencode agent that works on the gym tasks */
+    agent: string
+    runsPerArm: number
+    timeoutMin: number
+    /** gym tasks per job run */
+    maxTasksPerRun: number
+    /** bericht = report only; archivieren = archive after 2 confirmed rounds on different days */
+    consequence: "bericht" | "archivieren"
+  }
   quality: {
     /** weights of the components (0 = not counted) */
     weights: { belegt: number; frische: number; hinweise: number; zweifel: number; anker: number; gym: number }
@@ -598,6 +618,8 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
     jobs: {},
     anchors: { enabled: true },
     provenance: { enabled: true, perParagraph: "warnen" },
+    crosscheck: { enabled: true, model: "", kinds: ["knowledge", "memory", "skill"] },
+    gym: { enabled: true, model: "", agent: "build", runsPerArm: 3, timeoutMin: 10, maxTasksPerRun: 2, consequence: "bericht" },
     quality: { weights: { belegt: 0.35, frische: 0.15, hinweise: 0.2, zweifel: 0.15, anker: 0.15, gym: 0.2 }, lowThreshold: 40, hintBoost: 0.15, freshDays: 365 },
     curatorIntervalDays: 7,
     curatorMaxChanges: 5,
@@ -968,6 +990,8 @@ const SCHEMA: Record<string, Rule> = {
   jobs: recordOf(jobConfig),
   anchors: { enabled: bool },
   provenance: { enabled: bool, perParagraph: oneOf("aus", "warnen", "pflicht") },
+  crosscheck: { enabled: bool, model: str, kinds: listOf("knowledge", "memory", "skill", "error", "glossary") },
+  gym: { enabled: bool, model: str, agent: str, runsPerArm: int(1, 20), timeoutMin: num(1, 240), maxTasksPerRun: int(1, 50), consequence: oneOf("bericht", "archivieren") },
   quality: {
     weights: { belegt: num(0, 1), frische: num(0, 1), hinweise: num(0, 1), zweifel: num(0, 1), anker: num(0, 1), gym: num(0, 1) },
     lowThreshold: int(0, 100),

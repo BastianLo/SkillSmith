@@ -132,6 +132,8 @@ export interface AgentRunInput {
   collectText?: boolean
   /** extra request query (directory of the session) */
   query?: Record<string, string>
+  /** tools switched on/off for this session (becomes session permissions; gym, read-only checks) */
+  tools?: Record<string, boolean>
 }
 
 export interface AgentRunResult {
@@ -166,7 +168,7 @@ export async function runAgentSession(input: AgentRunInput): Promise<AgentRunRes
       if (err instanceof ModelChoiceError) return result({ ok: false, error: `${err.message} (not offered by any configured provider)` })
       throw err
     }
-    const session = unwrap<{ id: string }>(await input.client.session.create({ body: { title: input.title } }))
+    const session = unwrap<{ id: string }>(await input.client.session.create({ body: { title: input.title }, ...(input.query ? { query: input.query } : {}) }))
     sessionID = session.id
     signals.markInternal(sessionID)
     input.onSession?.(sessionID)
@@ -177,8 +179,10 @@ export async function runAgentSession(input: AgentRunInput): Promise<AgentRunRes
         body: {
           agent: input.agent,
           ...(model ? { model } : {}),
+          ...(input.tools ? { tools: input.tools } : {}),
           parts: [{ type: "text", text: input.prompt }],
         },
+        ...(input.query ? { query: input.query } : {}),
       }),
     )
     const started = Date.now()

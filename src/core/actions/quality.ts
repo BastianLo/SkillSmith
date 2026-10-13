@@ -6,6 +6,7 @@ import { PROVENANCE_TYPES } from "../../types"
 import { truncate } from "../../util/text"
 import { askAssistant } from "../assistant"
 import { str } from "../frontmatter"
+import { CHECK_TYPES, GYM_MODES, type GymCheck } from "../gym"
 import { GuardError } from "../ops"
 import type { ActionDef } from "./types"
 import { defineAction } from "./types"
@@ -112,6 +113,70 @@ export const QUALITY_ACTIONS: ActionDef[] = [
       if (!a.ref && !a.quote && a.type !== "user") throw new GuardError("Quelle braucht eine Referenz oder ein Zitat")
       const msg = await ctx.ops.addSource(run, e.kind, e.name, { paragraph: a.paragraph, type: a.type, ref: a.ref, quote: a.quote })
       return { message: msg, target: a.target }
+    },
+  }),
+  defineAction({
+    name: "gym.task.save",
+    label: "Gym-Aufgabe speichern",
+    area: "system",
+    smith: "skillsmith",
+    args: {
+      id: { t: "string", max: 80, optional: true },
+      entry: { t: "id" },
+      title: { t: "string", max: 120, optional: true },
+      prompt: { t: "string", max: 4000, min: 10, multiline: true },
+      mode: { t: "enum", values: GYM_MODES },
+      checks: { t: "array", max: 10 },
+      project: { t: "string", max: 64, optional: true },
+    },
+    async run({ ctx }, run, a) {
+      if (!ctx.gym) throw new GuardError("Gym nicht verfügbar")
+      const checks: GymCheck[] = (a.checks as Array<Record<string, unknown>>).map((c) => {
+        const type = String(c.type)
+        if (!(CHECK_TYPES as readonly string[]).includes(type)) throw new GuardError(`Prüfung ${type} unbekannt`)
+        return { type: type as GymCheck["type"], ...(c.text ? { text: String(c.text) } : {}), ...(Array.isArray(c.items) ? { items: c.items.map(String) } : {}), ...(c.expected !== undefined ? { expected: String(c.expected) } : {}) }
+      })
+      const t = await ctx.gym.save(run, { id: a.id, entry: a.entry, title: a.title ?? "", prompt: a.prompt, mode: a.mode, checks, project: a.project })
+      return { message: `Gym-Aufgabe „${t.title}“ gespeichert`, data: t }
+    },
+  }),
+  defineAction({
+    name: "gym.task.status",
+    label: "Gym-Aufgabe bestätigen / verwerfen",
+    area: "system",
+    smith: "skillsmith",
+    args: { id: { t: "string", max: 80 }, status: { t: "enum", values: ["aktiv", "verworfen"] } },
+    async run({ ctx }, run, a) {
+      const t = ctx.gym?.task(a.id)
+      if (!t) throw new GuardError("Gym-Aufgabe nicht gefunden")
+      await ctx.gym!.save(run, { ...t, status: a.status })
+      return { message: a.status === "aktiv" ? "Gym-Aufgabe aktiv" : "Gym-Aufgabe verworfen" }
+    },
+  }),
+  defineAction({
+    name: "gym.propose",
+    label: "Gym-Aufgaben aus Sessions vorschlagen",
+    area: "system",
+    smith: "skillsmith",
+    args: {},
+    async run({ ctx }, run) {
+      const n = (await ctx.gym?.propose(run)) ?? 0
+      return { message: n ? `${n} Gym-Aufgabe(n) vorgeschlagen` : "keine neuen Vorschläge aus dem Session-Verlauf" }
+    },
+  }),
+  defineAction({
+    name: "gym.run",
+    label: "Gym-Runde starten",
+    area: "system",
+    smith: "skillsmith",
+    local: true,
+    // starts agent sessions (like agent tasks)
+    strongToken: "tasks",
+    args: { id: { t: "string", max: 80 } },
+    async run({ ctx }, _run, a) {
+      if (!ctx.gym) throw new GuardError("Gym nicht verfügbar")
+      const r = await ctx.gym.runTask(a.id)
+      return { message: `Gym: ${r.verdict} (ohne Eintrag ${r.a.passed}/${r.a.runs}, mit Eintrag ${r.b.passed}/${r.b.runs})`, data: r }
     },
   }),
 ]

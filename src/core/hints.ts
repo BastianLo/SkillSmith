@@ -176,7 +176,9 @@ export class HintEngine {
     const similarSession = (h: HistoryHit) => (h.similarity ?? 0) >= sessionMin || (h.matched.length >= 3 && h.coverage >= 0.75)
     // quality (5c): among the strong hits, entries with a high score come first
     const boost = this.ctx.options.quality.hintBoost
-    const byQuality = (hits: SearchHit[]): SearchHit[] => {
+    const byQuality = (all: SearchHit[]): SearchHit[] => {
+      // the gym found these harmful (confirmed): not shown as hints any more
+      const hits = this.ctx.gym ? all.filter((h) => !this.ctx.gym!.suppressed(`${h.kind}:${h.name}`)) : all
       if (!boost || !this.ctx.quality) return hits
       const rank = (h: SearchHit) => {
         const q = h.owned ? this.ctx.quality!.score(h.kind, h.name) : undefined

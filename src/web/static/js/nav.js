@@ -63,6 +63,7 @@ export const AREAS = [
       { path: "konflikte", label: "Konflikte", icon: "conflict", badge: "conflicts" },
       { path: "freigaben", label: "Freigaben", icon: "staged", badge: "staged" },
       { path: "code", label: "Wissen zum Code", icon: "code" },
+      { path: "gym", label: "Gym", icon: "gym" },
     ],
   },
   {
@@ -127,6 +128,7 @@ export const ROUTES = [
   ["kandidaten", V("candidates"), "qualitaet"],
   ["freigaben", V("staged"), "qualitaet"],
   ["code", V("code"), "qualitaet"],
+  ["gym", V("gym"), "qualitaet"],
   ["werkstatt", V("workshop"), "bibliothek"],
   ["werkstatt/:name", V("workshop"), "bibliothek"],
   ["export", V("export"), "system"],
