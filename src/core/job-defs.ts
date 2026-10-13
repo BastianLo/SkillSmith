@@ -135,6 +135,15 @@ export const BUILTIN_JOBS: JobDef[] = [
     run: (ctx, jr) => ctx.gym!.runJob(jr.trigger),
   },
   {
+    id: "review-extract",
+    label: "Review-Wissen aus GitHub",
+    description: "Holt Review-Kommentare neuer PRs der eingestellten Repositories (gh oder GitHub-MCP, nur lesend), bündelt ähnliche und schlägt ab 3 Kommentaren von 2 Personen eine Vorgabe vor.",
+    area: "reviews",
+    defaults: () => ({ daily: ["07:45"], catchUp: "once" }),
+    unavailable: (ctx) => (!ctx.options.reviews.enabled ? "Review-Wissen ist aus" : !ctx.options.reviews.repos.length ? "keine Repositories eingestellt (reviews.repos)" : undefined),
+    run: (ctx) => ctx.reviews!.runJob(),
+  },
+  {
     id: "prompt-review",
     label: "Prompts verbessern",
     description: "Prompts der Bibliothek, deren aktuelle Fassung mehrfach nachgebessert oder verworfen wurde, bekommen einen Verbesserungsvorschlag mit Diff (Sie geben frei).",

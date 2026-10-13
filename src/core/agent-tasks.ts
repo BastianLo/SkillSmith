@@ -917,8 +917,20 @@ export class AgentTasks implements HubListener {
     j.review = review
     const missing = criteria.filter((c) => !verdicts.some((v) => v.criterion === c.id))
     const unmet = criteria.filter((c) => verdicts.find((v) => v.criterion === c.id)?.verdict !== "erfuellt")
+    // 5f: pre-PR check against the conventions from reviews
+    let prErrors = 0
+    if (f.checks.includes("pr-check") && this.ctx.reviews) {
+      try {
+        const pr = await this.ctx.reviews.prCheck(j.workdir, j.baseCommit)
+        prErrors = pr.findings.length
+        review.findings.push(...pr.findings.map((x) => ({ source: "ai" as const, severity: "error" as const, file: x.file, line: x.line, text: `Vorgabe ${x.rule}: ${x.text}` })))
+        if (!pr.findings.length) review.summary = `${review.summary ? `${review.summary} · ` : ""}Vor-PR-Prüfung: ${pr.summary}`
+      } catch (err) {
+        review.findings.push({ source: "check", severity: "warn", text: `Vor-PR-Prüfung nicht möglich: ${truncate(errorMessage(err), 300)}` })
+      }
+    }
     const errors = review.findings.filter((x) => x.severity === "error")
-    const ok = (!f.checks.includes("criteria") || !unmet.length) && (!f.checks.includes("review") || !errors.length)
+    const ok = (!f.checks.includes("criteria") || !unmet.length) && (!f.checks.includes("review") || !errors.length) && (!f.checks.includes("pr-check") || !prErrors)
     await this.systemWrite(`${j.task} Verifikation`, async (run) => {
       const updated: Criterion[] = criteria.map((c) => {
         const v = verdicts.find((x) => x.criterion === c.id)

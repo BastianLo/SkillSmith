@@ -8,6 +8,7 @@ import { QualityEngine } from "./quality"
 import { CrossCheck } from "./crosscheck"
 import { Gym } from "./gym"
 import { Library } from "./library"
+import { ReviewKnowledge } from "./review-knowledge"
 import { AuditLog } from "./audit"
 import { EventBus } from "./bus"
 import type { Ctx } from "./context"
@@ -41,6 +42,7 @@ export function attachServices(ctx: Ctx, Database?: DatabaseClass, rawOptions: u
   ctx.ops.setCrossCheck(ctx.crosscheck)
   ctx.gym = new Gym(ctx)
   ctx.library = new Library(ctx)
+  ctx.reviews = new ReviewKnowledge(ctx)
   ctx.quality.gym = (id) => ctx.gym?.verdict(id)
   ctx.tasks.agentStatus = (name) => ctx.agentTasks.statusOf(name)
   ctx.audit = new AuditLog(ctx.store.stateDir, ctx.options, ctx.log.child("audit"), Database)

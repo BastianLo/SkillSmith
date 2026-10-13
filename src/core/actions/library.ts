@@ -3,6 +3,7 @@
  */
 import { contextValues, fillPrompt, fillSnippet, liveTemplates, parsePromptArgs, snippetCode } from "../library"
 import { GuardError } from "../ops"
+import { expandPath } from "../projects"
 import { callScript } from "../scripts"
 import { requireEntry, uniqueName } from "./util"
 import type { ActionDef } from "./types"
@@ -97,6 +98,46 @@ export const LIBRARY_ACTIONS: ActionDef[] = [
     async run({ ctx }, _run, a) {
       await ctx.library?.dismissCandidate(a.id)
       return { message: "verworfen" }
+    },
+  }),
+  defineAction({
+    name: "review.confirm",
+    label: "Review-Kandidat bestätigen",
+    area: "erinnerung",
+    smith: (a) => (a.as === "skill" ? "skillsmith" : "memorysmith"),
+    args: { id: { t: "string", max: 40 }, as: { t: "enum", values: ["vorgabe", "skill"] }, scope: { t: "enum", values: ["projekt", "global"], optional: true }, title: { t: "string", max: 120, min: 3 }, text: { t: "string", max: 4000, min: 10, multiline: true } },
+    async run({ ctx }, run, a) {
+      if (!ctx.reviews) throw new GuardError("Review-Wissen nicht verfügbar")
+      const target = await ctx.reviews.confirm(run, a.id, { as: a.as, scope: a.scope ?? "projekt", title: a.title, text: a.text })
+      return { message: `${a.as === "skill" ? "Skill" : "Vorgabe"} „${a.title}“ angelegt`, target, open: target ? `#/eintrag/${target}` : undefined }
+    },
+  }),
+  defineAction({
+    name: "review.reject",
+    label: "Review-Kandidat ablehnen",
+    area: "erinnerung",
+    smith: "memorysmith",
+    local: true,
+    args: { id: { t: "string", max: 40 } },
+    async run({ ctx }, _run, a) {
+      await ctx.reviews?.reject(a.id)
+      return { message: "abgelehnt (wird nicht erneut vorgeschlagen)" }
+    },
+  }),
+  defineAction({
+    name: "review.prCheck",
+    label: "Vor-PR-Prüfung",
+    area: "projekt",
+    smith: "memorysmith",
+    local: true,
+    readOnlySafe: true,
+    args: { project: { t: "string", max: 64, optional: true }, base: { t: "string", max: 200, optional: true, pattern: /^[\w./~^-]*$/ } },
+    async run({ ctx }, _run, a) {
+      if (!ctx.reviews) throw new GuardError("Review-Wissen nicht verfügbar")
+      const p = a.project ? ctx.projects.get(a.project) : undefined
+      if (a.project && !p?.homePath) throw new GuardError(`Projekt ${a.project} hat kein home_path`)
+      const r = await ctx.reviews.prCheck(p?.homePath ? expandPath(p.homePath) : ctx.worktree, a.base || undefined)
+      return { message: r.summary, data: r }
     },
   }),
 ]

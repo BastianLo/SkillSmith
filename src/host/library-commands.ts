@@ -7,7 +7,22 @@
 import type { Ctx } from "../core/context"
 import { contextValues, fillPrompt, parsePromptArgs, promptVariables } from "../core/library"
 
-export const LIBRARY_COMMANDS = [{ name: "prompt", usage: "/prompt <name> [variable=wert …] [text]", description: "skillsmith: Prompt aus der Bibliothek ausfüllen und senden (Variablen wie {{ticket}} aus dem Kontext)" }]
+export const LIBRARY_COMMANDS = [
+  { name: "prompt", usage: "/prompt <name> [variable=wert …] [text]", description: "skillsmith: Prompt aus der Bibliothek ausfüllen und senden (Variablen wie {{ticket}} aus dem Kontext)" },
+  { name: "smith-pr-check", usage: "/smith-pr-check [basis]", description: "skillsmith: Diff des Branches gegen die Vorgaben aus Reviews prüfen (Vor-PR-Prüfung)" },
+]
+
+/** /smith-pr-check [base]: findings at file and line with the rule and the original comments. */
+export async function prCheckCommand(ctx: Ctx, base: string): Promise<string> {
+  if (!ctx.reviews) return "Review-Wissen ist nicht verfügbar."
+  const r = await ctx.reviews.prCheck(ctx.worktree, base.trim() || undefined)
+  if (!r.findings.length) return `Vor-PR-Prüfung (gegen ${r.base.slice(0, 10)}): ${r.summary}`
+  const lines = r.findings.map((f) => {
+    const src = f.comments.map((id) => ctx.reviews!.comment(id)).filter(Boolean).slice(0, 2).map((c) => c!.url ?? `${c!.repo}#${c!.pr}`)
+    return `- ${f.file ? `\`${f.file}${f.line ? `:${f.line}` : ""}\`` : "(ohne Datei)"} – ${f.text} (${f.rule}${src.length ? `; aus Reviews: ${src.join(", ")}` : ""})`
+  })
+  return `**Vor-PR-Prüfung** gegen ${r.base.slice(0, 10)}: ${r.summary}\n\n${lines.join("\n")}`
+}
 
 export async function promptCommand(ctx: Ctx, raw: string): Promise<{ ok: boolean; text: string }> {
   const { name, values, rest } = parsePromptArgs(raw)

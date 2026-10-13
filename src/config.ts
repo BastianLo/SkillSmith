@@ -313,6 +313,27 @@ export interface Options {
     /** sources per paragraph from the smiths: aus | warnen (hint to the agent) | pflicht (rejected without) */
     perParagraph: "aus" | "warnen" | "pflicht"
   }
+  /** review knowledge from GitHub (5f) */
+  reviews: {
+    enabled: boolean
+    /** "owner/repo" */
+    repos: string[]
+    /** auto = gh when logged in, else the GitHub MCP in a read-only session */
+    source: "auto" | "gh" | "mcp"
+    /** path of the GitHub CLI ("" = gh) */
+    gh: string
+    /** opencode agent for the MCP session ("" = build) */
+    agent: string
+    minComments: number
+    minPersons: number
+    /** similarity threshold of the bundling (0–1) */
+    similarity: number
+    /** first fetch: this many days back */
+    days: number
+    maxPrs: number
+    /** pre-PR check also against conventions that do not come from reviews */
+    checkAllConventions: boolean
+  }
   crosscheck: {
     enabled: boolean
     /** "provider/model" of the checker – a different model than the writer; empty = no cross-check */
@@ -618,6 +639,7 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
     jobs: {},
     anchors: { enabled: true },
     provenance: { enabled: true, perParagraph: "warnen" },
+    reviews: { enabled: true, repos: [], source: "auto", gh: "", agent: "", minComments: 3, minPersons: 2, similarity: 0.45, days: 30, maxPrs: 30, checkAllConventions: false },
     crosscheck: { enabled: true, model: "", kinds: ["knowledge", "memory", "skill"] },
     gym: { enabled: true, model: "", agent: "build", runsPerArm: 3, timeoutMin: 10, maxTasksPerRun: 2, consequence: "bericht" },
     quality: { weights: { belegt: 0.35, frische: 0.15, hinweise: 0.2, zweifel: 0.15, anker: 0.15, gym: 0.2 }, lowThreshold: 40, hintBoost: 0.15, freshDays: 365 },
@@ -990,6 +1012,7 @@ const SCHEMA: Record<string, Rule> = {
   jobs: recordOf(jobConfig),
   anchors: { enabled: bool },
   provenance: { enabled: bool, perParagraph: oneOf("aus", "warnen", "pflicht") },
+  reviews: { enabled: bool, repos: strList, source: oneOf("auto", "gh", "mcp"), gh: str, agent: str, minComments: int(2, 100), minPersons: int(1, 50), similarity: num(0.1, 0.95), days: int(1, 3650), maxPrs: int(1, 500), checkAllConventions: bool },
   crosscheck: { enabled: bool, model: str, kinds: listOf("knowledge", "memory", "skill", "error", "glossary") },
   gym: { enabled: bool, model: str, agent: str, runsPerArm: int(1, 20), timeoutMin: num(1, 240), maxTasksPerRun: int(1, 50), consequence: oneOf("bericht", "archivieren") },
   quality: {

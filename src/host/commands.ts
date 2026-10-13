@@ -35,7 +35,7 @@ export interface CommandDef {
   description: string
 }
 
-import { LIBRARY_COMMANDS, promptCommand } from "./library-commands"
+import { LIBRARY_COMMANDS, prCheckCommand, promptCommand } from "./library-commands"
 
 export const COMMANDS: CommandDef[] = [
   { name: "smith-help", usage: "/smith-help", description: "skillsmith: Übersicht aller Befehle" },
@@ -382,6 +382,8 @@ export async function handleCommand(ctx: Ctx, deps: CommandDeps, name: string, r
   switch (name) {
     case "prompt":
       return (await promptCommand(ctx, args)).text
+    case "smith-pr-check":
+      return prCheckCommand(ctx, args)
     case "smith-help":
       return [
         "**skillsmith Befehle** (skillsmith · docsmith · errorsmith · toolsmith · memorysmith · doctor)",

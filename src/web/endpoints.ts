@@ -62,6 +62,20 @@ export const ENDPOINTS: Record<string, Endpoint> = {
     const rounds = st.rounds.filter((r) => !entry || r.entry === entry).slice(-100).reverse()
     return { available: true, consequence: ctx.options.gym.consequence, tasks, rounds, suppressed: st.suppressed, archived: st.archived }
   },
+  // review knowledge (5f)
+  reviews: (ctx) => {
+    if (!ctx.reviews) return { available: false, candidates: [], rules: [] }
+    const st = ctx.reviews.state()
+    return {
+      available: true,
+      repos: ctx.options.reviews.repos,
+      source: ctx.options.reviews.source,
+      fetched: st.fetched,
+      comments: Object.keys(st.comments).length,
+      candidates: ctx.reviews.candidates().map((c) => ({ ...c, items: c.comments.map((id) => st.comments[id]).filter(Boolean).slice(0, 20) })),
+      rules: ctx.reviews.rules(),
+    }
+  },
   // snippet and prompt library (5j)
   library: (ctx) => ({
     candidates: ctx.library?.candidates() ?? [],
