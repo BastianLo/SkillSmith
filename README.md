@@ -25,7 +25,7 @@ Alle Smiths arbeiten nach demselben Prinzip: Kandidaten (Wiederholungsnachweis),
 
 Steht in LiteLLM ein Embedding-Modell bereit (z. B. Qwen3-Embedding-8B), sucht skillsmith zusätzlich **nach Bedeutung** – automatisch, ohne Konfiguration (siehe [Semantische Suche](#semantische-suche-embeddings)). Ohne Embeddings funktioniert alles weiter mit Volltextsuche (BM25).
 
-Getestet mit **opencode 1.18.19 und 1.18.35** (macOS/Linux). Version 4.0.0-beta.1 (Phase 5, Teil 1: Einstellungen, Log, Jobs, Eingang, Workflow je Spalte). opencode v2 wird noch nicht unterstützt.
+Getestet mit **opencode 1.18.19 und 1.18.35** (macOS/Linux). Version 4.0.0-beta.1 (Phase 5, Teil 1: Einstellungen, Log, Jobs, Eingang, Workflow je Spalte). opencode 2 (Vorschau `opencode2`) wird über einen eigenen Adapter unterstützt (siehe unten).
 
 ---
 
@@ -51,6 +51,32 @@ Getestet mit **opencode 1.18.19 und 1.18.35** (macOS/Linux). Version 4.0.0-beta.
 3. opencode neu starten. `/smith-help` zeigt alle Befehle, `/smith-report` den Status.
 
 Es muss nichts installiert werden (kein `npm install`). Für toolsmith wird `python3` gebraucht (macOS: Command Line Tools, Python 3.9 reicht).
+
+### opencode 2 (Vorschau `opencode2`)
+
+skillsmith läuft auch mit opencode 2 (getestet mit `opencode2` 0.0.0-beta-19271, Plugin-API 2.x). Derselbe Ordner, nur der Eintrag in `~/.config/opencode/opencode.json` sieht anders aus – opencode 2 lädt aus dem Ordner selbst `server.ts`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["./plugins/skillsmith"]
+}
+```
+
+mit Optionen:
+
+```json
+{ "plugins": [{ "package": "./plugins/skillsmith", "options": { "writeMode": "shadow" } }] }
+```
+
+Alles Wesentliche funktioniert wie unter opencode 1: Hintergrund-Reviews aller Smiths und der Doktor (eigene, versteckte Agenten mit nur ihren Werkzeugen), alle Befehle, Lese-Werkzeuge, Hinweise in der Nutzernachricht, Live-Fehlerhinweise an der Shell-Ausgabe, „merk dir“, Subagent-Antworten für memorysmith, Embeddings (Endpunkt aus den Providern der `opencode.json`), Weboberfläche. Unterschiede, weil opencode 2 Plugins das (noch) nicht anbietet:
+
+- Hintergrund-Sessions werden nicht gelöscht (Plugins können Sessions nicht entfernen); sie tragen den Titel „skillsmith-agent · …“.
+- Bei der Kompaktierung plant skillsmith den Review wie gewohnt, der Arbeitsstand-Block landet aber nicht in der Zusammenfassung.
+- Befehlsausgaben gibt der Agent wieder (wie bei opencode 1), Toasts gibt es nicht.
+- Agenten-Aufträge: Freigaben von Rückfragen („Permission“) bitte direkt in opencode beantworten; Session-Diffs und Zurücksetzen kommen aus git.
+- Neue Skills sieht opencodes eigene Skill-Liste nach einem Neustart (über `skill_search`/`skill_read` sofort).
+- Die eigenständige Anwendung (`skillsmith start`) startet weiterhin `opencode serve` (opencode 1); unter opencode 2 läuft skillsmith im Hintergrunddienst von `opencode2`.
 
 ### Update auf Version 3
 
@@ -819,7 +845,7 @@ Alle Dateien sind Markdown mit Frontmatter und können von Hand bearbeitet werde
 ## Grenzen
 
 - **Neue Skills erscheinen erst nach einem Neustart in opencodes eigener Skill-Liste**; über `skill_search`/`skill_read` und die Hinweise sind sie sofort nutzbar.
-- opencode v2 wird noch nicht unterstützt (Logik ist hostunabhängig, es fehlt ein Adapter).
+- opencode 2 wird als Vorschau unterstützt (`server.ts`, Adapter `src/host/v2.ts`); Einschränkungen siehe „opencode 2“ unter Installation.
 - Die Qualität hängt vom Modell ab. Mit kleinen Modellen ggf. `writeMode: "stage"` (oder pro Smith) nutzen.
 - Hintergrund-Reviews verbrauchen Tokens: pro Review laufen bis zu fünf Agenten parallel, danach ggf. der Doktor.
 - Arbeitsstände und Ergebnisse sind lokal (pro Rechner), Entscheidungen, Vorgaben und Erfahrungen liegen im Git-Store.

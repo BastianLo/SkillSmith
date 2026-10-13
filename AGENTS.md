@@ -4,7 +4,7 @@ Dieses Dokument richtet sich an Agenten/Entwickler, die skillsmith weiterentwick
 
 ## 1. Zweck und Designprinzipien
 
-skillsmith ist ein opencode-Plugin (Plugin-API v1, getestet mit opencode **1.18.19** und **1.18.35**, Version 3.0) mit fünf „Smiths“ und dem Doktor, die im Hintergrund Sessions bewerten und einen gemeinsamen Store pflegen. Seit 3.0 ist die Weboberfläche ein schreibender Arbeitsplatz (Wissensbasis, Aufgaben/Board, Projekte mit Pipeline, Agenten-Aufträge, Audit-Log, Metriken):
+skillsmith ist ein opencode-Plugin (Plugin-API v1, getestet mit opencode **1.18.19** und **1.18.35**; dazu ein Adapter für die Plugin-API 2.x, getestet mit `opencode2` **0.0.0-beta-19271**, Version 3.0) mit fünf „Smiths“ und dem Doktor, die im Hintergrund Sessions bewerten und einen gemeinsamen Store pflegen. Seit 3.0 ist die Weboberfläche ein schreibender Arbeitsplatz (Wissensbasis, Aufgaben/Board, Projekte mit Pipeline, Agenten-Aufträge, Audit-Log, Metriken):
 
 | Smith | Arten (`Kind`) | Hintergrund-Agenten | Schreib-Tools |
 |---|---|---|---|
@@ -31,7 +31,8 @@ Prinzipien:
 ## 2. Laden durch opencode (nicht kaputtmachen!)
 
 - Der Nutzer trägt `"./plugins/skillsmith/index.ts"` oder `["./plugins/skillsmith/index.ts", {optionen}]` in `plugin` ein. Optionen kommen als 2. Argument von `server(input, options)`.
-- **Pfad-Plugins müssen `export default { id, server }` exportieren** (`index.ts`).
+- **Pfad-Plugins müssen `export default { id, server }` exportieren** (`index.ts`; zusätzlich `setup` für opencode 2).
+- opencode 2: `"plugins": ["./plugins/skillsmith"]` bzw. `[{ "package": "./plugins/skillsmith", "options": {…} }]` (Pfad relativ zur Config-Datei). opencode2 löst im Ordner zuerst `server`, dann `index` auf → `server.ts` exportiert `{ id, setup }`; Optionen kommen als `context.options`.
 - **`package.json` ohne `main`/`exports`**, **keine Laufzeit-Abhängigkeiten** (nur Node-Builtins). `@opencode-ai/plugin` wird optional dynamisch importiert (zod-Schemas, `src/host/schema.ts`); sonst JSON-Schema-Args. `SKILLSMITH_FORCE_JSON_SCHEMA=1` erzwingt den Fallback (E2E grün in beiden Modi).
 - `src/py/checker.py` wird über `new URL("../py/checker.py", import.meta.url)` gefunden – beim Packen mitliefern.
 - Mehrfachinstanzen pro Verzeichnis: Guard `globalThis[Symbol.for("skillsmith.instance:<dir>")]`.
@@ -40,7 +41,8 @@ Prinzipien:
 ## 3. Architektur
 
 ```
-index.ts                     export default { id: "skillsmith", server: createServer }
+index.ts                     export default { id: "skillsmith", server: createServer, setup }
+server.ts                    opencode-2-Einstieg: export default { id: "skillsmith", setup } (src/host/v2.ts)
 bin/skillsmith               ausführbarer Launcher (Node-Shebang); löst seinen realen Pfad auf und
                              importiert bin/skillsmith.ts (der Befehl bleibt ohne Dateiendung)
 bin/skillsmith.ts            CLI der eigenständigen Anwendung: run/start/stop/restart/status/url/logs/
@@ -71,6 +73,8 @@ src/host/commands.ts         30 Befehle (/smith-*, /skills-search|adopt, /knowle
 src/host/library-commands.ts /prompt (gefüllter Prompt als Nutzernachricht), /smith-pr-check
 src/host/memory-commands.ts  /memory, /remember, /forget, /resume, /smith-doctor, /smith-web; Report-Zeilen
 src/host/schema.ts           Arg-Specs → zod oder JSON-Schema
+src/host/v2.ts               opencode-2-Adapter: V2Client (v1-SDK-Fassade über context.session/catalog/agent),
+                             toV1Messages, setup() → createServer() + Übersetzung der Transforms/Hooks/Events
 
 src/core/kinds.ts            Kind-Register: Layout (dir|file), Haupt-Datei, Tiers, Frontmatter parse/serialize,
                              Suchfelder+Gewichte, Aliase für Befehle, Tags normalisieren, Glossar-Slug
@@ -384,19 +388,28 @@ Wie v1: mkdir-Locks (`store`, `git`, `review-<sid>`, `curator`, `lifecycle`, `us
 - Eine Session mit `query.directory` = anderes Verzeichnis läuft in einer eigenen Plugin-Instanz (eigener `server()`-Aufruf) im selben Prozess.
 - `opencode serve` lädt Plugins **lazy**: der `server`-Hook feuert erst, wenn ein API-Request eintrifft. Ohne Request passiert bei `serve` nichts – auch der Web-Autostart läuft nicht an. Die Standalone-CLI (`bin/skillsmith.ts`) liest die Server-Adresse aus der Ausgabe von `opencode serve` und sendet dann `GET /agent`, um das Plugin zu laden; danach startet die Weboberfläche. `opencode serve` wird mit `--port 0` gestartet (opencode wählt einen freien Port und meldet ihn).
 
-## 6. Portierung auf opencode v2
+## 6. opencode 2 (Adapter `src/host/v2.ts`)
 
-Neuer Adapter `src/host/v2.ts`; zu prüfen: `cfg.skills` (Array), Agent-/Command-Registrierung, Event-Namen, Message-/Part-Struktur (`transcript.ts`), SDK-Aufrufe (`agent-runner.ts`, `reviewer.ts`). `src/core/**` sollte unverändert bleiben.
+opencode 2 (`opencode2`, Kanal `beta` von `@opencode-ai/cli`/`@opencode-ai/plugin`) hat eine neue Plugin-API: `export default { id, setup(context) }`, Registrierung über Transforms (`agent|tool|command|skill|catalog.transform(cb)`), Hooks (`session.hook("prompt"|"context"|…)`, `tool.hook("execute.before"|"execute.after")`, `permission.hook("evaluate")`, `shell.hook`), Ereignisse über `context.event.subscribe()` (async iterable), Sessions über `context.session.create|prompt|wait|context|get|switchAgent|switchModel|synthetic|interrupt`. Der Kern bleibt unverändert; der Adapter
+
+1. baut `V2Client`, eine Fassade mit genau den v1-SDK-Aufrufen des Kerns (`session.create/promptAsync/messages/get/abort/status`, `config.providers/get`, `app.agents`; `list/delete/children/revert/diff` antworten leer, Permission-Antworten werfen),
+2. ruft `createServer({client, directory, worktree, skillsmithBridge})` und übersetzt das v1-Hook-Objekt (Tabelle im Dateikopf): `config` einmal beim Setup → `agent.transform` (v1-Agent → `Agent.Info`: `prompt`→`system`, `permission`-Objekt → `permissions`-Regeln `{action, resource:"*", effect}`, Modell `provider/modell` → `{providerID, id}`; allen anderen Agenten werden die `*_`-Schreib-Tools als letzte Regeln verboten), `command.transform` (41 Befehle), `skill.transform` (aktive Skills des Stores), `tool.transform` (Tools als JSON-Schema mit **`options: {codemode: false}`** – sonst erreichbar nur über das Codemode-Tool `execute`),
+3. übersetzt Ereignisse: `session.created`, `session.execution.started` (busy), `.succeeded/.interrupted` (idle), `.failed` (error + idle), `session.compaction.started` (Review einplanen), `catalog.updated`/`config.updated` (Embedding-Endpunkt nachkonfigurieren über `skillsmithBridge.configureProviders` – die Provider der `opencode.json` stehen beim Setup noch nicht im Katalog).
+
+Verifizierte opencode-2-Fakten (beta-19271): Plugins aus Verzeichnissen (`<dir>/server`, sonst `index`), Konfiguration `providers` mit `package: "@opencode-ai/ai/providers/openai-compatible"` und `settings {baseURL, apiKey}` (der v1-Paketname `@ai-sdk/openai-compatible` wird für eigene Provider abgelehnt); `agent.transform` → `update(id)` legt unbekannte Agenten an; Agent-`permissions` (letzte passende Regel gewinnt, `*` als Platzhalter) schränken die Tool-Liste ein; Tool-Kontext `{sessionID, agent, messageID, id, progress}`, Ergebnis `{content}`; `execute.after` darf `result` ersetzen (Live-Fehlerhinweis); `context`-Hook: Nachrichten `{id, role, content}` (Inhalt String oder Teile) sind änderbar und landen so beim Modell (Hinweise), die Id ist die `messageID` des `prompt`-Hooks; Shell-Tool `shell` mit `metadata.exit`, Subagent-Tool `subagent` mit `metadata.sessionID` und Ausgabe `<subagent sessionID=… state=…>…</subagent>` (der Adapter macht daraus `bash`/`task` und den v1-Block `<task …><task_result>`); `session.synthetic` ohne `resume:false` startet eine Modellrunde, mit `resume:false` bleibt die Nachricht im Eingang bis zur nächsten Runde → Befehlsausgaben gibt der Agent wieder (wie in v1); `catalog.provider.list()` enthält eingebaute Integrationen (Zen, Copilot …, mit `integrationID`) – die Embedding-Erkennung sieht nur die konfigurierten; `opencode2 serve --port …` meldet Adresse und Passwort (Basic Auth `opencode:<passwort>`), REST unter `/api/*` (`/openapi.json`).
+
+Grenzen unter opencode 2: Hintergrund-Sessions bleiben stehen (kein Löschen für Plugins), kein Stand-Block in der Kompaktierung, keine Toasts, Token-Metriken aus Nachrichtenereignissen fehlen (Tool-Metriken laufen über die Hooks), Agenten-Aufträge ohne Permission-Antworten aus der Weboberfläche, die Standalone-CLI startet weiterhin opencode 1.
 
 ## 7. Tests
 
 ```bash
 cd skillsmith
 bun install                                   # nur Entwicklung (Typen, SDK für E2E)
-bun test test/unit                            # 216 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
+bun test test/unit                            # 218 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
 npx tsc --noEmit                              # strikte Typprüfung
 SKILLSMITH_TEST_PYTHON=/pfad/python3.9 bun test test/unit/smiths-flow.test.ts -t toolsmith   # Werkstatt mit Python 3.9
 OPENCODE_BIN=$(which opencode) bun test/e2e/run.ts   # E2E (107 Prüfungen, ~8 min)
+OPENCODE2_BIN=$(which opencode2) bun test/e2e/run-v2.ts   # E2E gegen opencode 2 (18 Prüfungen, ~1 min)
 
 # Weboberfläche im Browser (Playwright-Core + Chromium):
 bun test/web/demo.ts 47555                    # Demo-Store mit Daten, druckt DEMO_URL
@@ -406,6 +419,8 @@ tools/vendor/build.sh                         # Vendor-Bibliotheken neu bauen (n
 ```
 
 Phase 5 Teil 2 (Unit, je Schritt bewusst knapp): `phase5-quality.test.ts` (Anker Java/TS, Pin, geändert/verschoben/gelöscht, Passt noch, Herkunft, Qualitätswert), `phase5-gym.test.ts` (Kreuzprüfungs-Tor, Gym-Prüfungen, A/B-Runde mit Fake-Client), `phase5-scripts.test.ts` (TS-Prüfung, echter TS-Entwurf, call_script), `phase5-library.test.ts`, `phase5-reviews.test.ts`, `phase5-import.test.ts`. UI-Smoke enthält die neuen Seiten, UI-Flows „Passt noch“.
+
+opencode 2: `host-v2.test.ts` (Nachrichten v2 → v1 inkl. Shell-Exit und Subagent-Block, Transkript daraus, Client-Fassade: create/switchAgent/switchModel/prompt, Tools aus je Session, Provider-Sichten). `test/e2e/run-v2.ts` mit echtem `opencode2 serve` und Mock-Provider: Plugin aus dem Ordner aktiv, 11 versteckte Agenten mit Regeln, Schreib-Tools bei Nutzer-Agenten verboten, 41 Befehle, `/smith-report`, Hinweisblock in der Nutzernachricht, Lese-Tool im Hauptagenten, Fehler-Vorkommen und `<known_error>` an der Shell-Ausgabe, Subagent-Antwort aufgefangen, „merk dir“ → memorysmith-Review mit Commit, Hintergrund-Agent nur mit eigenen + Lese-Tools und dem Modell der Session, Embeddings aus dem Provider-Katalog, `/smith-web`.
 
 Office (`office.test.ts`): leere Dateien, Vorlage ↔ Dokument, Plan-Parser, Word-Operationen; Vorlage hochladen → neue Präsentation mit Prompt → Entwurf in Live-Schritten (Bus) → Übernehmen (ein Commit) → Suche findet den Folientext → Version wiederherstellen; Word hochladen, KI-Recht „lesen“ sperrt die KI, Body-Schutz, Speichern aus dem Editor, Nicht-Office-Datei abgelehnt. Testdateien in `test/fixtures/office/` (mit python-pptx/python-docx erzeugt). Demo: Vorlage, Präsentation aus Vorlage + KI, offener Entwurf, Word-Dokument; UI-Smoke `#/office…`, UI-Flows: KI-Entwurf in Word übernehmen, Folientitel im Editor ändern und speichern.
 
