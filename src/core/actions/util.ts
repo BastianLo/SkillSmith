@@ -70,6 +70,7 @@ export const EDITABLE_FIELDS: Record<Kind, string[]> = {
   agent: ["mode", "role", "model", "temperature", "steps", "color", "tools", "permission"],
   snippet: ["language", "origin", "test"],
   prompt: ["agent", "model"],
+  office: [],
 }
 
 export function pickFields(kind: Kind, fields: Record<string, unknown> | undefined): Record<string, unknown> | undefined {

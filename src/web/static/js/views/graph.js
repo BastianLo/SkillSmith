@@ -3,7 +3,7 @@ import { EDGE_COLOR, KIND_PLURAL, RELATION_TYPES, SYMMETRIC, colorOf, css, editH
 import { conflictsBlock, entryHead, factsBlock, mdBlock, relationDialog, relationsBlock, relevanceLine } from "../parts.js"
 import { app, errorText, promptDialog, toast } from "../ui.js"
 
-const GRAPH_KINDS = ["knowledge", "skill", "error", "script", "glossary", "memory", "task", "project", "arbeitsstand", "ergebnis", "session", "code"]
+const GRAPH_KINDS = ["knowledge", "office", "skill", "error", "script", "glossary", "memory", "task", "project", "arbeitsstand", "ergebnis", "session", "code"]
 
 // Physics defaults. Chosen by the user as the optimal feel for a continuously
 // running layout: much stronger base repulsion (180 -> 600), a stronger

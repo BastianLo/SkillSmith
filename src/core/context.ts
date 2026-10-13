@@ -9,6 +9,7 @@ import type { Gym } from "./gym"
 import type { Library } from "./library"
 import type { ReviewKnowledge } from "./review-knowledge"
 import type { Importer } from "./importer"
+import type { OfficeDocs } from "./office-docs"
 import type { AuditLog } from "./audit"
 import type { EventBus } from "./bus"
 import type { Doctor } from "./doctor"
@@ -106,6 +107,8 @@ export interface Ctx {
   reviews?: ReviewKnowledge
   /** document import (5h) */
   importer?: Importer
+  /** office documents (PowerPoint, Word): upload, editor, AI drafts */
+  office?: OfficeDocs
   /** tasks delegated to opencode agents */
   agentTasks: AgentTasks
   /** review queue and curator of this instance (web actions "review now", "curate") */

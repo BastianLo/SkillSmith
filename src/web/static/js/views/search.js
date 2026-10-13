@@ -2,7 +2,7 @@ import { get } from "../api.js"
 import { KIND_PLURAL, colorOf, h, put, swap } from "../dom.js"
 import { entryRow } from "./lists.js"
 
-const SEARCH_KINDS = ["knowledge", "skill", "error", "script", "glossary", "memory", "task", "project", "arbeitsstand", "ergebnis"]
+const SEARCH_KINDS = ["knowledge", "office", "skill", "error", "script", "glossary", "memory", "task", "project", "arbeitsstand", "ergebnis"]
 
 export default async function search(ctx) {
   const q = ctx.query
@@ -50,7 +50,7 @@ export default async function search(ctx) {
   }
   if (tag && !query) {
     swap(results, h("div", { class: "loading" }, h("span", { class: "spinner" }), "Lade …"))
-    const lists = await Promise.all(["knowledge", "skill", "error", "script", "glossary", "memory", "task", "project"].filter((k) => !kinds.length || kinds.includes(k)).map((k) => get("list", { kind: k, tag, author, project: "all" }).catch(() => [])))
+    const lists = await Promise.all(["knowledge", "office", "skill", "error", "script", "glossary", "memory", "task", "project"].filter((k) => !kinds.length || kinds.includes(k)).map((k) => get("list", { kind: k, tag, author, project: "all" }).catch(() => [])))
     if (!ctx.alive()) return
     const all = lists.flat()
     swap(results, all.length ? all.map((n) => entryRow(n)) : h("div", { class: "empty", text: `Keine Einträge mit #${tag}.` }))

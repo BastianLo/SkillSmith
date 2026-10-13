@@ -456,7 +456,7 @@ export class Ops {
     const nameErr = validateName(c.name)
     if (nameErr) throw new GuardError(nameErr)
     const warnings: string[] = []
-    if (kind === "task" || kind === "project" || kind === "agent" || kind === "snippet" || kind === "prompt" || (kind === "knowledge" && user)) {
+    if (kind === "task" || kind === "project" || kind === "agent" || kind === "snippet" || kind === "prompt" || kind === "office" || (kind === "knowledge" && user)) {
       // the user's documents, tasks, projects and agent prompts: free form, longer, still checked for secrets
       const t = c.title.trim()
       if (!t || /\n/.test(t) || t.length > 160) throw new GuardError("title must be a single line of 1–160 characters")
@@ -811,6 +811,34 @@ export class Ops {
     )
     this.applied(run, action, kind, a.name, a.reason)
     return `updated ${spec(kind).label} "${a.name}"${warnings.length ? `\nwarnings: ${warnings.join("; ")}` : ""}`
+  }
+
+  /**
+   * Office documents (src/core/office-docs.ts): the file plus its extracted text (search,
+   * embeddings, links). Only the user writes them – also the AI's edits are applied by the
+   * user's run after the user accepted the draft.
+   */
+  async officeWrite(
+    run: Run,
+    a: { name: string; isNew: boolean; title?: string; description?: string; tags?: unknown; fields: Record<string, unknown>; body: string; file: string; bytes: Uint8Array; reason?: string; baseVersion?: string; action?: ActionKind },
+  ): Promise<string> {
+    if (!isUser(run)) throw new GuardError("office documents are written by the user only")
+    if (!/^[a-z0-9][a-z0-9._-]*\.(pptx|docx|potx|dotx)$/.test(a.file)) throw new GuardError(`invalid office file name ${a.file}`)
+    const rec = a.isNew ? undefined : this.requireOwned("office", a.name)
+    const c = this.content("office", { ...a, body: truncate(a.body, this.o().docs.maxBodyChars) }, rec)
+    const warnings = this.validate("office", c, true)
+    await this.awaitClaims(run, this.claims("office", c.name), `office "${c.name}"`)
+    const files = { [a.file]: a.bytes }
+    if (a.isNew) {
+      if (this.d.store.fresh("office", c.name)) throw new GuardError(`an office document named "${c.name}" already exists`)
+      await this.d.store.create(run, "office", c, { reason: a.reason, files })
+      this.applied(run, "create", "office", c.name, a.reason)
+    } else {
+      const action = a.action ?? "update"
+      await this.d.store.update(run, "office", c.name, { title: c.title, description: c.description, tags: c.tags, fields: c.fields, body: c.body, files, baseVersion: a.baseVersion || undefined }, action, a.reason)
+      this.applied(run, action, "office", c.name, a.reason)
+    }
+    return `${a.isNew ? "created" : "updated"} office document "${c.name}"${warnings.length ? `\nwarnings: ${warnings.join("; ")}` : ""}`
   }
 
   async patch(run: Run, kind: Kind, a: { name: string; oldText: string; newText: string; reason?: string; evidence?: string; approved?: boolean; sources?: SourceArg[] }): Promise<string> {

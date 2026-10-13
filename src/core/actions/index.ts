@@ -25,11 +25,12 @@ import { OPERATION_ACTIONS } from "./operations"
 import { QUALITY_ACTIONS } from "./quality"
 import { LIBRARY_ACTIONS } from "./library"
 import { IMPORT_ACTIONS } from "./imports"
+import { OFFICE_ACTIONS } from "./office"
 import type { ActionDef, ActionEnv, ArgRule, ArgSchema, StrongToken } from "./types"
 
 export * from "./types"
 
-export const ACTIONS: ActionDef[] = [...ENTRY_ACTIONS, ...DOC_ACTIONS, ...TASK_ACTIONS, ...AGENT_ACTIONS, ...MEMORY_ACTIONS, ...SYSTEM_ACTIONS, ...OPERATION_ACTIONS, ...QUALITY_ACTIONS, ...LIBRARY_ACTIONS, ...IMPORT_ACTIONS]
+export const ACTIONS: ActionDef[] = [...ENTRY_ACTIONS, ...DOC_ACTIONS, ...TASK_ACTIONS, ...AGENT_ACTIONS, ...MEMORY_ACTIONS, ...SYSTEM_ACTIONS, ...OPERATION_ACTIONS, ...QUALITY_ACTIONS, ...LIBRARY_ACTIONS, ...IMPORT_ACTIONS, ...OFFICE_ACTIONS]
 const BY_NAME = new Map(ACTIONS.map((a) => [a.name, a]))
 
 export function actionDef(name: string): ActionDef | undefined {

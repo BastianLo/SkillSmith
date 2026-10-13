@@ -4,7 +4,7 @@ import { auditTab, conflictsBlock, entryHead, evidenceBlock, factsBlock, history
 import { act, app, confirmDialog, fill, modal, moreButton, previewDialog, promptDialog, tabBar, toast } from "../ui.js"
 import { anchorsBlock, provenanceTab, qualityBlock, qualityChip } from "../quality.js"
 
-const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "snippet", "prompt"])
+const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "snippet", "prompt", "office"])
 
 /** Banner for open AI proposals of an entry (diff, accept, adjust, reject). */
 export function proposalsBanner(data, onDone) {

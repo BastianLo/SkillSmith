@@ -32,6 +32,41 @@ function logFilter(q: URLSearchParams): LogFilter {
 const logDir = (ctx: Ctx) => join(ctx.store.stateDir, "log")
 
 export const ENDPOINTS: Record<string, Endpoint> = {
+  // office documents: entry, draft, templates
+  "office/one": (ctx, q) => {
+    const name = (q.get("id") ?? "").replace(/^office:/, "")
+    const e = ctx.store.getOwned("office", name)
+    if (!e) return { missing: true }
+    const draft = ctx.office?.draft(name)
+    return {
+      id: `office:${name}`,
+      name,
+      title: e.title,
+      description: e.description,
+      tags: e.tags,
+      tier: e.tier,
+      version: e.version,
+      fields: e.fields,
+      text: e.body,
+      draft: draft ? { ...draft, running: ctx.office?.isRunning(name) ?? false, stale: draft.baseVersion !== e.version } : undefined,
+      aiEdit: ctx.options.office.aiEdit,
+    }
+  },
+  "office/list": (ctx, q) => {
+    const tier = q.get("tier") === "archive" ? "archive" : "active"
+    return ctx.store
+      .list("office")
+      .filter((e) => e.tier === tier)
+      .map((e) => {
+        const d = ctx.office?.draft(e.name)
+        return { id: `office:${e.name}`, name: e.name, title: e.title, description: e.description, tags: e.tags, format: e.fields.format, pages: e.fields.pages, size: e.fields.size, template: e.fields.template, ai: e.fields.ai, updatedAt: e.meta?.updatedAt, draft: d ? d.status : undefined }
+      })
+      .sort((a, b) => String(b.updatedAt ?? "").localeCompare(String(a.updatedAt ?? "")))
+  },
+  "office/templates": (ctx, q) => {
+    const family = q.get("family")
+    return (ctx.office?.templates(family === "pptx" || family === "docx" ? family : undefined) ?? []).map((e) => ({ id: `office:${e.name}`, title: e.title, format: e.fields.format }))
+  },
   // settings page
   settings: (ctx) => {
     if (!ctx.settings) return { unavailable: true }

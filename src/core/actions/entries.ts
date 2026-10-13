@@ -40,6 +40,8 @@ async function save(env: ActionEnv, run: Run, a: any): Promise<{ message: string
     return { message: `${str(e.fields.id)} gespeichert`, target: a.target }
   }
   if (e.kind === "project") throw new GuardError("Projekte über „Projekt speichern“ ändern")
+  // the text of an office document is read from the file – edit the file instead
+  if (e.kind === "office" && a.body !== undefined && a.body !== e.body) throw new GuardError("Den Text eines Office-Dokuments in der Datei ändern (Office-Ansicht)")
   const fields = pickFields(e.kind, a.fields)
   const msg = await ctx.ops.update(run, e.kind, {
     name: e.name,
@@ -305,6 +307,10 @@ export const ENTRY_ACTIONS: ActionDef[] = [
     async run({ ctx }, run, a) {
       const { kind, name } = parseId(a.target)
       const cur = requireEntry(ctx, a.target)
+      if (kind === "office") {
+        if (!ctx.office) throw new GuardError("Office-Dokumente nicht verfügbar")
+        return ctx.office.restore(run, cur, a.hash)
+      }
       const old = await ctx.versions.contentAt(kind, name, a.hash)
       if (!old.main) throw new GuardError(`Version ${a.hash.slice(0, 8)} enthält ${a.target} nicht`)
       const c = spec(kind).parse(old.main, name)

@@ -1,8 +1,8 @@
 import type { SmithName, WriteMode } from "./config"
 
 export type Smith = SmithName
-export type Kind = "skill" | "knowledge" | "glossary" | "error" | "script" | "memory" | "task" | "project" | "agent" | "snippet" | "prompt"
-export const KINDS: Kind[] = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "agent", "snippet", "prompt"]
+export type Kind = "skill" | "knowledge" | "glossary" | "error" | "script" | "memory" | "task" | "project" | "agent" | "snippet" | "prompt" | "office"
+export const KINDS: Kind[] = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "agent", "snippet", "prompt", "office"]
 /** kinds the smiths maintain (reviewers, curator, doctor); tasks and projects belong to the user */
 export const CONTENT_KINDS: Kind[] = ["skill", "knowledge", "glossary", "error", "script", "memory"]
 

@@ -310,6 +310,16 @@ Unter **Qualität → Review-Wissen** und als Job: Review-Kommentare neuer PRs d
 
 **Wissen → Import:** PDF, Word (DOCX, ältere DOC auf macOS), PowerPoint, Markdown und Text per Klick oder Drag & Drop. Der Text wird lokal gelesen (PDF mit dem mitgelieferten pdf.js im Browser), links erscheinen die Seiten, rechts die Funde live: Wissen (Ordner `import/<Datei>`), Glossar- und Runbook-Kandidaten, Vorgaben, Entscheidungen (vorgeschlagen), Aufgaben-Vorschläge. Jeder Fund trägt Datei, Seite/Folie und das wörtliche Zitat – ein Zitat, das nicht in der Datei steht, verwirft skillsmith. Funde übernehmen, bearbeiten, mit einem Eintrag zusammenführen („ergänzt Eintrag X“) oder verwerfen; **Übernehmen** schreibt alles in einem Commit, das Original liegt als Anhang daneben (bis `import.storeMaxMB`). KI-Recht je Import (Standard „vorschlag“). Gescannte PDFs ohne Textebene werden gemeldet (keine Texterkennung).
 
+### Office-Dokumente (PowerPoint, Word)
+
+**Wissen → Office:** `.pptx` und `.docx` hochladen (Klick oder Drag & Drop), neu anlegen oder von der KI erstellen lassen. Der Text der Datei wird gelesen und steht im Eintrag (`office:<name>`): **Suche, Embeddings, [[Links]], Verknüpfungen und Graph** funktionieren wie bei jedem Dokument. Die Datei selbst liegt im Git-Store; jede Änderung ist eine **Version**: ansehen, herunterladen, wiederherstellen.
+
+- **Vorschau und selbst bearbeiten** im Browser (PowerPoint mit Menüband, Folien, Notizen; Word mit Formatvorlagen, Listen, Tabellen) – „Als neue Version speichern“ schreibt die Datei in einem Commit. Der Word-Editor ist noch jung: Inhalte, die er nicht kennt, können beim Speichern aus dem Editor verloren gehen – im Zweifel herunterladen und in Word bearbeiten, dann wieder hochladen.
+- **Mit der KI bearbeiten:** ein Prompt wie „Erstelle bitte ein Deckblatt“. Die KI plant die Änderungen (neue Folien mit Layout, Texte, Aufzählungen, Tabellen, Notizen, Absätze mit Formatvorlagen, Seitenumbrüche, Ersetzen …), skillsmith führt sie **Schritt für Schritt** an einem Entwurf aus – die Vorschau aktualisiert sich live. Weitere Prompts ändern denselben Entwurf; **Übernehmen** macht daraus eine neue Version (ein Commit), **Verwerfen** lässt die Datei unverändert. Inhalt darf die KI mit den Lesewerkzeugen aus der Wissensbasis holen. KI-Recht „lesen“ oder „privat“ schließt die KI-Bearbeitung aus.
+- **Neu anlegen:** „Neue Präsentation“ / „Neues Word-Dokument“ – leer oder **aus einer Vorlage**, optional gleich mit einem Prompt, der den Inhalt erstellt.
+- **Vorlagen:** eine `.potx` (PowerPoint) bzw. `.dotx` (Word) hochladen – Folienmaster, Layouts und Design bzw. Formatvorlagen werden für neue Dokumente übernommen; neue Folien der KI füllen die Platzhalter der Layouts, damit das Design stimmt. „Als Vorlage“ macht aus einem vorhandenen Dokument eine Vorlage.
+- Optionen: `office.maxMB` (größte Datei, 50), `office.aiEdit` (KI-Bearbeitung an/aus), `office.defaultAi` (KI-Recht neuer Office-Dokumente, „frei“). Makro-Dateien (`.pptm`, `.docm`) und alte Binärformate (`.ppt`, `.doc`) werden nicht angenommen.
+
 ### Bibliothek: Skripte, Snippets, Prompts
 
 - **Skripte** gibt es jetzt auch in **TypeScript** (node ≥ 22.18, sonst das Bun in opencode) – gleiche Prüfung, Sandbox und Freigabe wie Python. Neue Skripte haben einen einheitlichen Aufruf **`call_script(name, params)`**: Parameter und Ergebnis als JSON-Schema in `SCRIPT.md`, JSON auf stdin, Hülle `{ok, data, error}` auf stdout. Agenten nutzen das Werkzeug `call_script`, in der Weboberfläche „Ausführen“ (Formular aus dem Schema), im Terminal `smith run`.
@@ -765,6 +775,7 @@ Ungültige Werte werden ignoriert (Standardwert) und im Log gemeldet.
 ├── skills/<stufe>/<name>/SKILL.md          ← aktive lädt opencode selbst
 ├── knowledge/<stufe>/<ordner…>/<name>.md   ← Wissen und Ihre Dokumente (`.ordner.json`: KI-Recht je Ordner)
 ├── knowledge/_anhaenge/<JJJJ-MM>/           ← Anhänge (Bilder, PDFs …)
+├── office/<stufe>/<name>/OFFICE.md + Datei  ← PowerPoint/Word (.pptx/.docx/.potx/.dotx) mit erkanntem Text
 ├── glossary/<stufe>/<abk>.md               ← Glossar
 ├── errors/<stufe>/<name>.md                ← Fehler mit Lösung
 ├── scripts/<stufe>/<name>/                 ← SCRIPT.md, <modul>.py, test_<modul>.py
@@ -776,6 +787,7 @@ Ungültige Werte werden ignoriert (Standardwert) und im Log gemeldet.
 ├── glossary-ignore.json  store.json
 └── state/                                  ← nicht versioniert
     ├── queue/ sessions/ runs/ locks/ staged/ drafts/ exports/
+    ├── office/<name>/                      ← KI-Entwürfe von Office-Dokumenten (bis „Übernehmen“)
     ├── embeddings/vectors.sqlite           ← Vektoren (Einträge, Kandidaten, Projekt-Doku, Sessions, Tags)
     ├── memory.sqlite                       ← Arbeitsstände, Ergebnisse, Subagent-Ergebnisse, lokale Verknüpfungen, Doktor
     ├── audit.sqlite  metrics.sqlite        ← Audit-Log (Hash-Kette) und Metriken (Ereignisse + Tagessummen)
@@ -816,6 +828,7 @@ Alle Dateien sind Markdown mit Frontmatter und können von Hand bearbeitet werde
 - Linux hat keine vollwertige Test-Sandbox (nur Netzwerk-Isolation via `unshare`, falls erlaubt).
 - Code-Anker werden per Muster aufgelöst (Java, Kotlin, TypeScript/JavaScript); Umbenennungen erkennt skillsmith über git und den Symbolnamen, nicht über eine echte Symbolauflösung.
 - Gym-Läufe im Modus „arbeiten“ laufen in einem git-Worktree des Projekts; die Shell des Agenten läuft dort nicht in `sandbox-exec` (das kann opencode nicht), nur Prüfbefehle von skillsmith.
+- Office-Dokumente: Vorschau und Editor sind Nachbauten von PowerPoint/Word im Browser (ooxml); sehr komplexe Folien (SmartArt, eingebettete Objekte, Animationen) sehen dort teils anders aus als in Office. Die KI ändert Struktur und Text (Folien, Platzhalter, Textfelder, Tabellen, Absätze, Formatvorlagen), keine freien Grafiken.
 - Die Menüleisten-App ist noch nicht umgesetzt; das IntelliJ-Plugin liegt als Quellcode vor und muss gebaut werden.
 
 ## Fehlersuche
