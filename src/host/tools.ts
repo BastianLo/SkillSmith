@@ -282,12 +282,23 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
     ),
 
     skill_read: def(
-      "Load the full instructions of a skill by name – works for every skill, including dormant and archived ones and skills created after this session started.",
-      { name: { kind: "string", description: "Exact skill name (from skill_search or the skill list)" } },
+      "Load the full instructions of a skill by name – works for every skill, including dormant and archived ones and skills created after this session started. Skills can have reference files (references/…): pass file=<relative path> to read one.",
+      {
+        name: { kind: "string", description: "Exact skill name (from skill_search or the skill list)" },
+        file: { kind: "string", description: "Relative path of a file of the skill (e.g. references/styleguide.md)", optional: true },
+      },
       async (args, context) => {
         const name = str(args.name).trim()
         const rec = aiStoreOf(ctx).get("skill", name)
         if (!rec) return notFound("skill", name)
+        const file = str(args.file).trim().replace(/^\.?\/+/, "")
+        if (file) {
+          if (file.split("/").some((p) => p === ".." || p === "") || !/\.(md|markdown|txt|json|ya?ml|csv|tsv|xml|html|css|svg|py|ts|js|sh)$/i.test(file)) return `"${file}" is not a readable text file of skill "${rec.name}".`
+          const text = ctx.store.readFileOf(rec, file)
+          if (text === undefined) return `Skill "${rec.name}" has no file "${file}". Files: ${ctx.store.supportFiles(rec, 40).map((f) => f.slice(rec.dir.length + 1)).join(", ") || "none"}`
+          used(context, "skill", rec.name)
+          return `<skill_file skill="${rec.name}" path="${file}">\n${truncate(text, 60_000)}\n</skill_file>`
+        }
         used(context, "skill", rec.name)
         const files = ctx.store.supportFiles(rec, 15)
         const owner = rec.owned ? "skillsmith" : `foreign (${rec.source ?? "read-only"})`
@@ -302,7 +313,7 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
           "",
           `Base directory for this skill: ${rec.dir}`,
           "Relative paths in this skill are relative to this base directory.",
-          files.length ? `<skill_files>\n${files.map((f) => `<file>${f}</file>`).join("\n")}\n</skill_files>` : "",
+          files.length ? `<skill_files>\n${files.map((f) => `<file>${f}</file>`).join("\n")}\n</skill_files>\nRead a file with skill_read(name="${rec.name}", file="<path relative to the base directory>").` : "",
           "</skill_content>",
         ]
           .filter((l) => l !== "")

@@ -4,6 +4,7 @@
 import { get, officeFile, officeSave, officeUpload } from "../api.js"
 import { fmtBytes, fmtDate, fmtRel, h, icon, put, swap, tagChips } from "../dom.js"
 import { act, app, confirmDialog, errorText, modal, toast, toastError } from "../ui.js"
+import { officeSkillsCard } from "../skill-upload.js"
 
 const ACCEPT = ".pptx,.potx,.docx,.dotx"
 const FORMAT = { pptx: "PowerPoint", potx: "PowerPoint-Vorlage", docx: "Word", dotx: "Word-Vorlage" }
@@ -103,6 +104,7 @@ function listPage(ctx) {
           input,
         ),
     listEl,
+    officeSkillsCard(ctx),
   )
   ctx.el.replaceChildren(page)
   ctx.on("office.draft", () => load())
@@ -284,6 +286,9 @@ export default async function officeView(ctx) {
           ? h("p", { class: "muted", text: "KI-Bearbeitung ist ausgeschaltet (office.aiEdit)." })
           : [
               prompt,
+              doc.skills?.length
+                ? h("div", { class: "faint", title: "Diese Skills werden bei jeder KI-Bearbeitung vollständig geladen (Office-Seite → Skills der Office-Agenten)" }, icon("skill", 12), ` Skills: ${doc.skills.join(", ")}`)
+                : h("div", { class: "faint" }, "Keine Skills hinterlegt – ", h("a", { href: "#/office", text: "auf der Office-Seite auswählen" })),
               h("div", { class: "chips-wrap" }, QUICK[family].map((q) => h("button", { class: "chip", type: "button", text: q, disabled: running, onclick: () => ((prompt.value = q), prompt.focus()) }))),
               h("div", { class: "toolbar" }, h("span", { class: "faint grow", text: "Strg/⌘ + Enter" }), h("button", { class: "btn primary", type: "button", disabled: running || app.readOnly, onclick: send }, icon("spark", 14), d ? "Weiter ändern" : "Ausführen")),
             ],
@@ -302,6 +307,7 @@ export default async function officeView(ctx) {
                 { class: "office-step" },
                 h("div", { class: "faint", text: `${fmtRel(s.at)} · „${s.prompt}“` }),
                 s.summary ? h("div", { text: s.summary }) : null,
+                s.skills?.length ? h("div", { class: "faint", text: `mit Skills: ${s.skills.join(", ")}` }) : null,
                 s.done?.length ? h("ul", {}, s.done.map((x) => h("li", { text: x }))) : null,
                 s.errors?.length ? h("ul", { class: "danger" }, s.errors.map((x) => h("li", { text: x }))) : null,
               ),

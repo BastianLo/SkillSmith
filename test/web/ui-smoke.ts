@@ -77,6 +77,7 @@ const routes: Array<[string, string, string?]> = [
   ["62-office", "#/office"],
   ["63-office-praesentation", "#/office/logout-konzept"],
   ["64-office-word", "#/office/konzept-logout-word"],
+  ["65-skill-paket", "#/eintrag/skill%3Apraesentation-firmenstil"],
 ]
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium" })

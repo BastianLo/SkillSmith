@@ -841,6 +841,36 @@ export class Ops {
     return `${a.isNew ? "created" : "updated"} office document "${c.name}"${warnings.length ? `\nwarnings: ${warnings.join("; ")}` : ""}`
   }
 
+  /**
+   * A skill package of the user (upload): SKILL.md plus supporting files (references/…).
+   * Replaces an existing skill of the same name completely (old supporting files are removed).
+   */
+  async skillPackage(run: Run, a: { name: string; description: string; tags?: unknown; body: string; files: Record<string, string | Uint8Array>; replace: boolean; reason?: string }): Promise<string> {
+    if (!isUser(run)) throw new GuardError("skill packages are uploaded by the user only")
+    const err = validateName(a.name)
+    if (err) throw new GuardError(err)
+    const description = a.description.replace(/\s+/g, " ").trim()
+    if (!description || description.length > 1024) throw new GuardError("description must be 1–1024 characters")
+    if (!a.body.trim()) throw new GuardError("SKILL.md has no instructions")
+    if (a.body.length > this.o().docs.maxBodyChars) throw new GuardError(`SKILL.md is longer than ${this.o().docs.maxBodyChars} characters`)
+    const texts = Object.entries(a.files).filter(([, v]) => typeof v === "string") as Array<[string, string]>
+    this.scanSecrets(a.name, description, a.body, ...texts.map(([f, t]) => `${f}\n${t}`))
+    const existing = this.d.store.fresh("skill", a.name)
+    if (!existing && this.d.store.get("skill", a.name)) throw new GuardError(`"${a.name}" is a foreign skill (read only); rename the package`)
+    if (existing && !a.replace) throw new GuardError(`a skill named "${a.name}" already exists`)
+    await this.awaitClaims(run, this.claims("skill", a.name), `skill "${a.name}"`)
+    const tags = normalizeTags(a.tags)
+    if (existing) {
+      await this.d.store.update(run, "skill", a.name, { description, tags, body: a.body, files: a.files, replaceFiles: true, fields: { ...existing.fields, author: "user" } }, "update", a.reason)
+      this.applied(run, "update", "skill", a.name, a.reason)
+      return `updated skill "${a.name}" (${Object.keys(a.files).length} file(s))`
+    }
+    const c: EntryContent = { name: a.name, title: a.name, description, tags, fields: { author: "user" }, body: a.body }
+    await this.d.store.create(run, "skill", c, { reason: a.reason, files: a.files })
+    this.applied(run, "create", "skill", a.name, a.reason)
+    return `created skill "${a.name}" (${Object.keys(a.files).length} file(s))`
+  }
+
   async patch(run: Run, kind: Kind, a: { name: string; oldText: string; newText: string; reason?: string; evidence?: string; approved?: boolean; sources?: SourceArg[] }): Promise<string> {
     const rec = this.requireOwned(kind, a.name)
     const proposal = this.aiGate(run, kind, a.name, "content")

@@ -1,4 +1,5 @@
 import { get, saveBlob } from "../api.js"
+import { skillUploadDialog } from "../skill-upload.js"
 import { qualityChip } from "../quality.js"
 import { AI_ACCESS, KIND_PLURAL, MEMORY_PLURAL, aiChip, debounce, entryHref, fmtRel, h, icon, kindChip, put, select, statusChip, swap, tagChips } from "../dom.js"
 import { act, app, promptDialog } from "../ui.js"
@@ -123,6 +124,7 @@ export default async function lists(ctx) {
     filters.tag ? h("span", { class: "chip accent" }, `#${filters.tag}`, h("span", { class: "x", text: "×", onclick: () => apply({ tag: "" }) })) : null,
     h("span", { class: "grow" }),
     kind === "agent" && !app.readOnly ? h("button", { class: "btn", type: "button", title: "Die Agenten aus opencode.json und den Agent-Dateien als erste Version in den Store übernehmen (KI-Recht „Vorschlag“)", onclick: async () => (await act("agent.import", {})) && load() }, icon("import", 14), "Aus opencode übernehmen") : null,
+    kind === "skill" && !app.readOnly ? h("button", { class: "btn", type: "button", title: "Skill-Paket hochladen: Ordner mit SKILL.md und references/, .zip/.skill oder eine SKILL.md", onclick: async () => (await skillUploadDialog()) && load() }, icon("import", 14), "Skill hochladen") : null,
     NEW_ROUTE[kind] && !app.readOnly ? h("a", { class: "btn primary", href: NEW_ROUTE[kind] }, icon("plus", 14), "Neu") : null,
     kind === "snippet" ? h("button", { class: "btn", type: "button", onclick: async () => saveBlob(new Blob([(await get("library/live-templates")).xml], { type: "application/xml" }), "skillsmith-live-templates.xml") }, icon("export", 14), "IntelliJ-Live-Templates") : null,
   )

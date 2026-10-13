@@ -833,13 +833,22 @@ const DOCX_OPS = `Operationen (Blöcke über ihre Id aus der Gliederung, z. B. p
 - {"op":"table","after":"p5","rows":[["A","B"],["1","2"]]}
 - {"op":"replace_text","find":"alt","replace":"neu"}`
 
-export function editPrompt(o: { family: OfficeFamily; title: string; info: OfficeInfo; request: string; history?: string[]; templateName?: string; isNew?: boolean }): string {
+export function editPrompt(o: { family: OfficeFamily; title: string; info: OfficeInfo; request: string; history?: string[]; templateName?: string; isNew?: boolean; skills?: string }): string {
   const what = o.family === "pptx" ? "die PowerPoint-Präsentation" : "das Word-Dokument"
   return [
     `Du bearbeitest ${what} „${o.title}“ im Auftrag des Nutzers. Du änderst die Datei nicht selbst: du antwortest mit einem Plan aus Operationen, die das Plugin Schritt für Schritt ausführt (der Nutzer sieht dabei live zu).`,
     o.isNew ? "Das Dokument ist neu und noch leer – lege den Inhalt vollständig an." : "",
     o.templateName ? `Es basiert auf der Vorlage „${o.templateName}“ – nutze deren Layouts bzw. Formatvorlagen, keine eigenen Farben oder Schriften, wenn es nicht verlangt ist.` : "",
     "Inhalt aus der Wissensbasis darfst du mit den Lesewerkzeugen suchen (skill_search, docs_search, memory_search …); erfinde keine Fakten. Schreibe in der Sprache des Dokuments bzw. der Anfrage.",
+    ...(o.skills
+      ? [
+          "",
+          "## Verbindliche Skills",
+          "Die folgenden Skills hat der Nutzer diesem Agenten fest zugeordnet. Sie sind vollständig geladen (SKILL.md und alle Referenzdateien) – befolge sie bei jeder Änderung (Gestaltung, Aufbau, Stil, Regeln). Widerspricht die Anfrage einem Skill, hat die Anfrage Vorrang; sag das dann in der summary.",
+          "",
+          o.skills,
+        ]
+      : []),
     "",
     "## Anfrage",
     o.request,

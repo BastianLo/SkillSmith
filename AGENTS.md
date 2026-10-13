@@ -125,7 +125,7 @@ src/core/graph.ts            Graph: Knoten (Store-Einträge, Arbeitsstände, Erg
 src/core/memory-format.ts    Textformen: Arbeitsstand, Erinnerungsliste, voller Eintrag mit Verknüpfungen, Stand-Block
 src/core/doctor.ts           Doctor: Queue nach Läufen, scan() (Kandidaten → Konflikte), judge() (Agent smith-doctor),
                              decide(), Folge-Läufe, Backfill
-src/core/actions/            Aktionskatalog (139 Aktionen, `ACTIONS`): entries (speichern mit Basisversion, umbenennen
+src/core/actions/            Aktionskatalog (140 Aktionen, `ACTIONS`): entries (speichern mit Basisversion, umbenennen
                              inkl. Link-Nachzug, verschieben, umwandeln, zusammenführen, archivieren, löschen),
                              docs (Dokumente, Ordner, Vorlagen, Anhänge, Vorschläge der KI, Tagesnotiz, Schnellnotiz,
                              Assistent), tasks (Aufgaben, Board, Projekte, Pipeline), agents (Auftrag, Freigabe,
@@ -185,6 +185,9 @@ src/core/office.ts           Office-Dateien (pptx/docx/potx/dotx): sniffFormat, 
 src/core/office-docs.ts      OfficeDocs (ctx.office): Upload, Neu (Vorlage), Speichern aus dem Editor, Version
                              (git show als Bytes), Wiederherstellen, KI-Entwürfe in state/office/<name>/
 src/core/actions/office.ts   office.upload|create|save|edit|accept|discard|asTemplate
+src/core/skill-package.ts    Skill-Pakete: parseSkillPackage (.zip/.skill, SKILL.md, Ordner als *.skilldir.json),
+                             sichere Pfade (≤ 3 Ebenen, Links in SKILL.md nachgezogen), Limits; skillTextFiles
+src/core/actions/skills.ts   skill.upload (Payload, 428 bei vorhandenem Skill → force = ersetzen)
 src/vendor/office-core.js    ooxml für den Server (pptx-viewer-core, ooxml-core/pptx/automation, docx-core,
                              JSZip; Bun-Bundle, lazy geladen) – gebaut mit tools/vendor/office/build.sh
 src/core/local-ctx.ts        Kontext ohne opencode (smith-CLI)
@@ -343,6 +346,13 @@ Wie v1: mkdir-Locks (`store`, `git`, `review-<sid>`, `curator`, `lifecycle`, `us
 - **Projekt-Doku:** `ProjectDocs.scan()` höchstens alle 60 s (mtime/size-Cache je Datei, Inhalt redigiert), `syncVectors()` im Hintergrund (Start, nach Suche); `search()` = MiniIndex ∪ Vektoren per RRF. `docs_search` in einem Hintergrund-Lauf hängt die Treffer an `run.haystack` an (zählen als Nachweis).
 - **Frühere Sessions:** `HintEngine.select()` nutzt denselben Anfragevektor; Treffer nur mit Links oder gelöstem Problem (`isUseful`), nie die aktuelle Session; semantisch ≥ `sessionHintSimilarity`, sonst BM25 mit ≥ 3 Termen und Abdeckung ≥ 0,75; max. 2.
 
+### Skill-Pakete (Referenzdateien)
+
+- `Store.writeEntry` nimmt Dateinamen mit Unterordnern (`references/x.md`, max. 3 Ebenen, kein `.`/`..`); `update(…, {files, replaceFiles: true})` entfernt Zusatzdateien, die nicht mehr im Paket sind (Pfad `rec.dir` wird berührt → Löschungen landen im Commit).
+- `Ops.skillPackage` (nur Nutzer-Läufe): Name/Beschreibung/Body prüfen, Geheimnis-Scan über Body und alle Textdateien, Fremd-Skill-Namen gesperrt, neu oder (mit `replace`) ersetzen, `author: user`. Upload: `POST /api/skill/upload?name=&force=1` (octet-stream, 16 MB) → `skill.upload`.
+- `skill_read(name, file?)` liest eine Textdatei des Skills (ohne Pfad-Ausbruch); Web: `GET /api/skill/files`, `/api/skill/file`.
+- **Office-Agenten:** `office.skills.{pptx,docx}` (Namen) → `OfficeDocs.skillContext(family)` lädt Body + alle Text-Zusatzdateien (sortiert, `<skill name=…>`, bis `office.skillMaxChars`, private ausgelassen, Nutzung gezählt) → Abschnitt „Verbindliche Skills“ in `editPrompt` (vor der Anfrage; Anfrage hat Vorrang). `DraftStep.skills` hält fest, welche Skills ein Schritt hatte. UI: Karte „Skills der Office-Agenten“ (`skill-upload.js`, speichert über `settings.set`), Anzeige im KI-Panel.
+
 ### Office-Dokumente (PowerPoint, Word)
 
 - **Art `office`** (`userOwned`, Smith docsmith): Ordner mit `OFFICE.md` (Frontmatter + Text der Datei als Markdown) und der Datei. Suche, Embeddings (`entry-office`), Links, Graph und Verknüpfungen nutzen den Text; KI-Recht wie bei Dokumenten (Standard `office.defaultAi`). Geschrieben wird nur über `Ops.officeWrite` (nur Nutzer-Läufe, Geheimnis-Scan auf dem Text, ein Commit mit Datei + `OFFICE.md` + Meta); `Store.writeEntry` nimmt dafür `Uint8Array`. `entry.save` lehnt Body-Änderungen ab (der Text kommt aus der Datei), `entry.restoreVersion` geht an `OfficeDocs.restore` (Bytes per `git show` mit `encoding: buffer`).
@@ -405,7 +415,7 @@ Grenzen unter opencode 2: Hintergrund-Sessions bleiben stehen (kein Löschen fü
 ```bash
 cd skillsmith
 bun install                                   # nur Entwicklung (Typen, SDK für E2E)
-bun test test/unit                            # 218 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
+bun test test/unit                            # 220 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
 npx tsc --noEmit                              # strikte Typprüfung
 SKILLSMITH_TEST_PYTHON=/pfad/python3.9 bun test test/unit/smiths-flow.test.ts -t toolsmith   # Werkstatt mit Python 3.9
 OPENCODE_BIN=$(which opencode) bun test/e2e/run.ts   # E2E (107 Prüfungen, ~8 min)
@@ -421,6 +431,8 @@ tools/vendor/build.sh                         # Vendor-Bibliotheken neu bauen (n
 Phase 5 Teil 2 (Unit, je Schritt bewusst knapp): `phase5-quality.test.ts` (Anker Java/TS, Pin, geändert/verschoben/gelöscht, Passt noch, Herkunft, Qualitätswert), `phase5-gym.test.ts` (Kreuzprüfungs-Tor, Gym-Prüfungen, A/B-Runde mit Fake-Client), `phase5-scripts.test.ts` (TS-Prüfung, echter TS-Entwurf, call_script), `phase5-library.test.ts`, `phase5-reviews.test.ts`, `phase5-import.test.ts`. UI-Smoke enthält die neuen Seiten, UI-Flows „Passt noch“.
 
 opencode 2: `host-v2.test.ts` (Nachrichten v2 → v1 inkl. Shell-Exit und Subagent-Block, Transkript daraus, Client-Fassade: create/switchAgent/switchModel/prompt, Tools aus je Session, Provider-Sichten). `test/e2e/run-v2.ts` mit echtem `opencode2 serve` und Mock-Provider: Plugin aus dem Ordner aktiv, 11 versteckte Agenten mit Regeln, Schreib-Tools bei Nutzer-Agenten verboten, 41 Befehle, `/smith-report`, Hinweisblock in der Nutzernachricht, Lese-Tool im Hauptagenten, Fehler-Vorkommen und `<known_error>` an der Shell-Ausgabe, Subagent-Antwort aufgefangen, „merk dir“ → memorysmith-Review mit Commit, Hintergrund-Agent nur mit eigenen + Lese-Tools und dem Modell der Session, Embeddings aus dem Provider-Katalog, `/smith-web`.
+
+Skill-Pakete (`skill-package.test.ts`): Ordner-Upload mit Referenzen (Pfade, Link-Nachzug, Warnungen), Ersetzen nach 428 entfernt alte Dateien, Geheimnis in Referenz abgelehnt; zugewiesener Skill landet komplett (inkl. Referenz) im Prompt des PowerPoint-Agenten. Demo: Skill „praesentation-firmenstil“ dem PowerPoint-Agenten zugewiesen, UI-Smoke `#/eintrag/skill%3Apraesentation-firmenstil`.
 
 Office (`office.test.ts`): leere Dateien, Vorlage ↔ Dokument, Plan-Parser, Word-Operationen; Vorlage hochladen → neue Präsentation mit Prompt → Entwurf in Live-Schritten (Bus) → Übernehmen (ein Commit) → Suche findet den Folientext → Version wiederherstellen; Word hochladen, KI-Recht „lesen“ sperrt die KI, Body-Schutz, Speichern aus dem Editor, Nicht-Office-Datei abgelehnt. Testdateien in `test/fixtures/office/` (mit python-pptx/python-docx erzeugt). Demo: Vorlage, Präsentation aus Vorlage + KI, offener Entwurf, Word-Dokument; UI-Smoke `#/office…`, UI-Flows: KI-Entwurf in Word übernehmen, Folientitel im Editor ändern und speichern.
 

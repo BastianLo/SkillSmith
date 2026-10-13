@@ -16,14 +16,16 @@
  */
 import { createHash } from "node:crypto"
 import { execFile } from "node:child_process"
-import { join } from "node:path"
+import { join, relative } from "node:path"
 import type { ActionKind, Entry, Run } from "../types"
-import { exists, readJson, removePath, writeBufferAtomic, writeJsonAtomic, ensureDir } from "../util/fs"
+import { exists, readJson, readText, removePath, writeBufferAtomic, writeJsonAtomic, ensureDir } from "../util/fs"
 import { nowIso, slugify, truncate } from "../util/text"
 import { readFileSync } from "node:fs"
 import { askAssistant } from "./assistant"
 import type { Ctx } from "./context"
-import { aiAccessOf } from "./kinds"
+import { aiAccessOf, isPrivate } from "./kinds"
+import { skillTextFiles } from "./skill-package"
+import { ASSISTANT_AGENT } from "./prompts"
 import { GuardError } from "./ops"
 import { HASH_RE } from "./versions"
 import {
@@ -50,6 +52,8 @@ export interface DraftStep {
   summary: string
   done: string[]
   errors: string[]
+  /** skills loaded for this step */
+  skills?: string[]
 }
 
 export interface OfficeDraft {
@@ -264,6 +268,39 @@ export class OfficeDocs {
     this.ctx.bus?.emit("office.draft", { name: d.name, rev: d.rev, status: d.status, current: d.current, error: d.error, steps: d.steps.length, ...extra })
   }
 
+  /**
+   * The skills assigned to the PowerPoint / Word agent (office.skills), loaded completely: SKILL.md
+   * and every text file of the skill (references/…), bounded by office.skillMaxChars.
+   */
+  skillContext(family: OfficeFamily): { text: string; names: string[]; missing: string[]; truncated: boolean } {
+    const o = this.ctx.options.office
+    const wanted = (o.skills?.[family] ?? []).filter(Boolean)
+    const names: string[] = []
+    const missing: string[] = []
+    const parts: string[] = []
+    for (const name of wanted) {
+      const sk = this.ctx.store.get("skill", name)
+      if (!sk || (sk.owned && isPrivate(sk))) {
+        missing.push(name)
+        continue
+      }
+      const files = this.ctx.store
+        .supportFiles(sk, 200)
+        .filter((f) => /\.(md|markdown|txt|json|ya?ml|csv|tsv|xml|html|css|svg)$/i.test(f))
+        .map((f) => ({ rel: relative(sk.dir, f), text: readText(f) ?? "" }))
+        .filter((f) => f.text.trim())
+        .sort((a, b) => a.rel.localeCompare(b.rel))
+      parts.push([`<skill name="${sk.name}">`, `# ${sk.name}`, sk.description, "", sk.body.trim(), ...(files.length ? ["", skillTextFiles(files)] : []), "</skill>"].join("\n"))
+      names.push(sk.name)
+      this.ctx.usage.recordLoad("skill", sk.name, { agent: ASSISTANT_AGENT } as any)
+    }
+    let text = parts.join("\n\n")
+    const truncated = text.length > o.skillMaxChars
+    if (truncated) text = `${text.slice(0, o.skillMaxChars)}\n\n[… gekürzt: mehr als ${o.skillMaxChars} Zeichen Skill-Text (office.skillMaxChars)]`
+    if (missing.length) this.ctx.log.warn(`office skills not found: ${missing.join(", ")}`)
+    return { text, names, missing, truncated }
+  }
+
   /** Start an AI edit by prompt; runs in the background, the draft shows every step. */
   edit(name: string, prompt: string, opts: { isNew?: boolean } = {}): OfficeDraft {
     if (!this.ctx.options.office.aiEdit) throw new GuardError("KI-Bearbeitung ist aus (office.aiEdit)")
@@ -292,9 +329,12 @@ export class OfficeDocs {
     const family = familyOf(d.format)
     try {
       const info = await inspect(d.format, bytes)
+      const skills = this.skillContext(family)
+      d.current = { ...(d.current ?? { prompt, index: 0, total: 0, phase: "plant" }), label: skills.names.length ? `plant die Änderungen (Skills: ${skills.names.join(", ")})` : "plant die Änderungen" }
+      this.emit(d)
       const text = await askAssistant(
         this.ctx,
-        editPrompt({ family, title: e.title, info, request: prompt, history: d.steps.map((s) => s.prompt), templateName: str(e.fields.template) || undefined, isNew: isNew || info.pages === 0 }),
+        editPrompt({ family, title: e.title, info, request: prompt, history: d.steps.map((s) => s.prompt), templateName: str(e.fields.template) || undefined, isNew: isNew || info.pages === 0, skills: skills.text || undefined }),
         `Office ${e.title}`,
       )
       const plan = parsePlan(text)
@@ -313,7 +353,7 @@ export class OfficeDocs {
         this.writeDraft(d, step.bytes)
         this.emit(d, step.error ? { stepError: step.error } : {})
       })
-      d.steps.push({ at: nowIso(), prompt, summary: plan.summary, done: res.done, errors: res.errors })
+      d.steps.push({ at: nowIso(), prompt, summary: plan.summary, done: res.done, errors: res.errors, ...(skills.names.length ? { skills: skills.names } : {}) })
       d.status = "bereit"
       d.current = undefined
       this.writeDraft(d, res.bytes)

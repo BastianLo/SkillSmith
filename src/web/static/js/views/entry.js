@@ -3,6 +3,7 @@ import { AI_ACCESS, editHref, entryHref, fmtDate, graphHref, h, icon, kindOf, na
 import { auditTab, conflictsBlock, entryHead, evidenceBlock, factsBlock, historyBlock, linksBlock, mdBlock, relationsBlock, relevanceLine, targetPicker, usageTab, versionsTab } from "../parts.js"
 import { act, app, confirmDialog, fill, modal, moreButton, previewDialog, promptDialog, tabBar, toast } from "../ui.js"
 import { anchorsBlock, provenanceTab, qualityBlock, qualityChip } from "../quality.js"
+import { skillFilesBlock, skillUploadDialog } from "../skill-upload.js"
 
 const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "snippet", "prompt", "office"])
 
@@ -168,6 +169,7 @@ function kindActions(data, id, reload) {
   if (kind === "script") out.push(h("button", { class: "btn", type: "button", onclick: () => runScriptDialog(data, id) }, icon("play", 14), "Ausführen"))
   if (kind === "snippet" || kind === "prompt") out.push(h("button", { class: "btn", type: "button", onclick: () => fillDialog(data, id, kind) }, icon("copy", 14), "Ausfüllen und kopieren"))
   if (kind === "script") out.push(btn("Neu testen", "script.retest", { target: id }, "refresh"), h("a", { class: "btn", href: `#/werkstatt/${encodeURIComponent(nameOf(id))}` }, icon("workshop", 14), "Werkstatt"))
+  if (kind === "skill" && !app.readOnly) out.push(h("button", { class: "btn", type: "button", title: "Den Skill durch ein neues Paket (Ordner, .zip, SKILL.md) ersetzen – mit allen Referenzdateien", onclick: () => skillUploadDialog({ replace: nameOf(id) }) }, icon("import", 14), "Neue Version hochladen"))
   if (kind === "glossary") out.push(h("a", { class: "btn", href: `#/glossar?q=${encodeURIComponent(data.rawFields?.term || data.title)}`, text: "In der Glossar-Tabelle" }))
   if (id.startsWith("state:")) {
     out.push(
@@ -348,7 +350,7 @@ export default async function entry(ctx) {
         h(
           "div",
           { class: "cols" },
-          h("div", { class: "stack" }, h("div", { class: "card" }, mdBlock(data.body, { section: ctx.query.get("abschnitt") || undefined, checkboxes: kind === "knowledge" && !app.readOnly, onToggle: kind === "knowledge" && !app.readOnly ? async (line, done) => (await act("checklist.toggle", { target: id, line, done }, { quiet: true })) && load() : undefined })), evidenceBlock(data), historyBlock(data)),
+          h("div", { class: "stack" }, h("div", { class: "card" }, mdBlock(data.body, { section: ctx.query.get("abschnitt") || undefined, checkboxes: kind === "knowledge" && !app.readOnly, onToggle: kind === "knowledge" && !app.readOnly ? async (line, done) => (await act("checklist.toggle", { target: id, line, done }, { quiet: true })) && load() : undefined })), kind === "skill" ? skillFilesBlock(nameOf(id)) : null, evidenceBlock(data), historyBlock(data)),
           h("div", { class: "stack" }, qualityBlock(data), anchorsBlock(data, id, load), factsBlock(data), data.backlinks?.length ? linksBlock({ ...data, links: [], mentions: [] }) : null),
         ),
       )

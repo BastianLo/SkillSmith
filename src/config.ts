@@ -322,6 +322,10 @@ export interface Options {
     aiEdit: boolean
     /** KI-Recht of new office documents */
     defaultAi: "frei" | "vorschlag" | "lesen" | "privat"
+    /** skills the PowerPoint / Word agent always gets completely (SKILL.md + all text files) */
+    skills: { pptx: string[]; docx: string[] }
+    /** upper bound of the loaded skill text per edit (characters) */
+    skillMaxChars: number
   }
   import: {
     maxMB: number
@@ -662,7 +666,7 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
     jobs: {},
     anchors: { enabled: true },
     provenance: { enabled: true, perParagraph: "warnen" },
-    office: { maxMB: 50, aiEdit: true, defaultAi: "frei" },
+    office: { maxMB: 50, aiEdit: true, defaultAi: "frei", skills: { pptx: [], docx: [] }, skillMaxChars: 150_000 },
     import: { maxMB: 30, storeMaxMB: 5, defaultAi: "vorschlag", chunkChars: 6000, crosscheck: true, keepOriginal: false },
     reviews: { enabled: true, repos: [], source: "auto", gh: "", agent: "", minComments: 3, minPersons: 2, similarity: 0.45, days: 30, maxPrs: 30, checkAllConventions: false },
     crosscheck: { enabled: true, model: "", kinds: ["knowledge", "memory", "skill"] },
@@ -1037,7 +1041,7 @@ const SCHEMA: Record<string, Rule> = {
   jobs: recordOf(jobConfig),
   anchors: { enabled: bool },
   provenance: { enabled: bool, perParagraph: oneOf("aus", "warnen", "pflicht") },
-  office: { maxMB: num(0.1, 500), aiEdit: bool, defaultAi: oneOf(...ACCESS) },
+  office: { maxMB: num(0.1, 500), aiEdit: bool, defaultAi: oneOf(...ACCESS), skills: { pptx: strList, docx: strList }, skillMaxChars: int(2000, 2_000_000) },
   import: { maxMB: num(0.1, 500), storeMaxMB: num(0, 100), defaultAi: oneOf(...ACCESS), chunkChars: int(1000, 100_000), crosscheck: bool, keepOriginal: bool },
   reviews: { enabled: bool, repos: strList, source: oneOf("auto", "gh", "mcp"), gh: str, agent: str, minComments: int(2, 100), minPersons: int(1, 50), similarity: num(0.1, 0.95), days: int(1, 3650), maxPrs: int(1, 500), checkAllConventions: bool },
   crosscheck: { enabled: bool, model: str, kinds: listOf("knowledge", "memory", "skill", "error", "glossary") },

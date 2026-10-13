@@ -108,6 +108,8 @@ export interface UpdateChange {
   fields?: Record<string, unknown>
   body?: string
   files?: Record<string, string | Uint8Array>
+  /** remove the entry's other files that are not in `files` (skill packages) */
+  replaceFiles?: boolean
   baseVersion?: string
 }
 
@@ -558,8 +560,10 @@ export class Store {
     if (files) {
       if (s.layout !== "dir") throw new StoreError(`${kind} entries have no extra files`)
       for (const [fname, text] of Object.entries(files)) {
-        if (!/^[A-Za-z0-9_.-]+$/.test(fname) || fname === s.main) throw new StoreError(`invalid file name ${fname}`)
+        // flat names, or up to two sub folders (skills: references/…, assets/…)
+        if (!/^[A-Za-z0-9_][A-Za-z0-9_.-]*(\/[A-Za-z0-9_][A-Za-z0-9_.-]*){0,2}$/.test(fname) || fname.split("/").some((x) => x === ".." || x === ".") || fname === s.main) throw new StoreError(`invalid file name ${fname}`)
         const p = join(dirname(main), fname)
+        ensureDir(dirname(p))
         if (typeof text === "string") writeFileAtomic(p, text)
         else writeBufferAtomic(p, text)
         written.push(p)
@@ -620,6 +624,11 @@ export class Store {
       if (change.tags !== undefined) content.tags = change.tags
       if (change.fields) content.fields = { ...content.fields, ...change.fields }
       if (change.body !== undefined) content.body = change.body
+      if (change.replaceFiles && spec(kind).layout === "dir") {
+        const keep = new Set(Object.keys(change.files ?? {}).map((f) => join(rec.dir, f)))
+        for (const f of this.supportFiles(rec, 1000)) if (!keep.has(f)) removePath(f)
+        this.touch(run, rec.dir)
+      }
       const written = this.writeEntry(kind, rec.tier as Tier, content, change.files)
       this.touch(run, ...written)
       const meta = this.ensureMeta(rec)

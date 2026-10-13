@@ -105,6 +105,11 @@ export async function officeSave(target, bytes, base) {
   const r = await fetch(`/api/office/save${qs({ target, base })}`, { method: "POST", headers: headers({ "content-type": "application/octet-stream" }), body: bytes })
   return parse(r)
 }
+/** Skill package upload (.zip/.skill, SKILL.md, or a folder as *.skilldir.json). */
+export async function skillUpload(body, name, params = {}) {
+  const r = await fetch(`/api/skill/upload${qs({ name, ...params })}`, { method: "POST", headers: headers({ "content-type": "application/octet-stream" }), body })
+  return parse(r)
+}
 /** Bytes of an office document (current, a commit, or the AI draft). */
 export async function officeFile(id, params = {}) {
   const r = await fetch(`/api/office/file${qs({ id, ...params })}`, { headers: headers() })
