@@ -285,6 +285,22 @@ async function main() {
   await ctx.ops.create(rv, "knowledge", { name: "gateway-token-cache", title: "Token-Cache im Gateway", description: "Geprüfte Tokens werden 60 Sekunden gecacht", tags: ["auth", "gateway"], body: "## Cache\nDas Gateway cached geprüfte Tokens 60 Sekunden.\n\n## Folge\nEine Sperre wirkt erst nach Ablauf des Caches.\n\n## Offen\nOb der Cache je Pod oder zentral liegt, ist nicht belegt.", evidence: "Das Gateway cached geprüfte Tokens 60 Sekunden", sources: [{ paragraph: "Eine Sperre wirkt erst", evidence: "Revocations werden erst nach Ablauf des Caches wirksam" }] })
   await finalizeRun(ctx, rv, { ok: true })
 
+  // 5d–5j: gym task, snippet, prompt, review candidates, an import (findings without model)
+  await web("entry.create", { kind: "snippet", title: "SLF4J-Logger", description: "Logger-Feld einer Klasse", tags: ["java", "logging"], body: "```java\nprivate static final Logger ${name:log} = LoggerFactory.getLogger(${klasse}.class);\n```" })
+  await web("entry.create", { kind: "prompt", name: "review-diff", title: "Diff reviewen", description: "Diff gegen die Vorgaben des Teams prüfen", tags: ["review"], body: "Prüfe {{auswahl}} für Ticket {{ticket}} auf Branch {{branch}} gegen unsere Vorgaben.", fields: { agent: "build" } })
+  await web("gym.task.save", { entry: "knowledge:refresh-token-sperren", prompt: "Wie wird beim Logout das Refresh-Token gesperrt?", mode: "fragen", checks: [{ type: "contains", text: "REVOKED_AT" }] })
+  await ctx.reviews!.add(["Bitte keine Field Injection mit @Autowired.", "Constructor Injection statt @Autowired Field Injection.", "Field Injection @Autowired vermeiden."].map((body, i) => ({ id: `acme/portal#${i + 1}`, repo: "acme/portal", pr: 10 + i, author: i % 2 ? "ben" : "anna", body, path: "src/LoginController.java", line: 12, url: `https://github.com/acme/portal/pull/${10 + i}`, at: new Date().toISOString() })))
+  await ctx.reviews!.bundle()
+  const imp = await ctx.importer!.create("Konzept Logout.md", new TextEncoder().encode("# Ablauf\nBeim Logout wird das Refresh-Token gesperrt und der Gateway-Cache geleert.\n\n# Offene Punkte\nMehrgeräte-Logout mit dem Fachbereich klären."))
+  const st = ctx.importer!.get(imp.id)!
+  st.status = "fertig"
+  st.sections = st.sections.map((x) => ({ ...x, done: true }))
+  st.findings = [
+    { index: 0, type: "wissen", title: "Logout sperrt das Refresh-Token", text: "Beim Logout wird das Refresh-Token gesperrt und der Gateway-Cache geleert.", quote: "Beim Logout wird das Refresh-Token gesperrt", page: 1, selected: true, similar: { id: "knowledge:refresh-token-sperren", title: "Refresh-Token sperren", score: 0.71 } },
+    { index: 1, type: "offen", title: "Mehrgeräte-Logout klären", text: "Mehrgeräte-Logout mit dem Fachbereich klären.", quote: "Mehrgeräte-Logout mit dem Fachbereich klären", page: 2, selected: true },
+  ]
+  require("node:fs").writeFileSync(require("node:path").join(ctx.store.stateDir, "imports", imp.id, "import.json"), JSON.stringify(st))
+
   // metrics over 90 days (charts, calendar, heatmap, tools)
   const m = ctx.metrics!
   const entries = ["skill:kafka-reset", "knowledge:auth-gateway", "knowledge:token-store", "error:pkix-path-building-failed", "knowledge:t2-testsystem", "memory:shop-entscheidung-token-speicherung"]

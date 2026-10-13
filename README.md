@@ -294,6 +294,28 @@ Die Live-Ansicht des Auftrags zeigt die Spalten mit Position und Rücksprüngen,
 - **Log** (Einblick → Log): strukturiert (`state/log/JJJJ-MM-TT.jsonl`), filterbar nach Stufe, Bereich, Lauf, Job, Session; live mitlesen, nach Lauf gruppieren. Stufe je Bereich einstellbar (`log.level`, `log.areas`), Aufbewahrung `log.days`/`log.maxMB`.
 - **Jobs** (System → Jobs): alles, was im Hintergrund regelmäßig läuft (Lebenszyklus, Konsolidierung, Skript-Retests, Doktor, Embeddings, Vorab-Pläne, Agenten verbessern, Aufräumen) mit Zeitplan (Uhrzeit, Wochentage, Intervall, bei Leerlauf, Cron, nach Reviews), Verlauf mit Log-Link, von Hand starten, pausieren, abbrechen. Verpasste Läufe werden einmal nachgeholt (`catchUp`).
 
+### Code-Anker, Herkunft und Qualität
+
+- **Code-Anker:** `[[code:src/main/java/…/TokenStore.java]]`, `[[code:TokenStore]]`, `[[code:TokenStore#revoke]]` oder `[[code:Datei.ts#L40-L58]]` im Text binden Wissen an Code. Beim Speichern löst skillsmith den Anker im `home_path` der Projekte (bzw. im aktuellen Projekt) auf und merkt sich Pfad, Signatur, einen Hash des Codes und den Commit. Der Job „Code-Anker prüfen“ schaut nach neuen Commits nach: unverändert, geändert, verschoben (git-Umbenennung) oder gelöscht. Betroffene Einträge stehen im Eingang unter **Code geändert** mit dem Code-Diff – „Passt noch“ übernimmt den neuen Stand, „Vom Agenten beheben lassen“ macht einen Vorschlag mit Diff (das KI-Recht des Dokuments gilt). **Qualität → Wissen zum Code** zeigt alles Wissen zu einer Datei; im Graph sind Code-Dateien eigene Knoten. Auflösung per Muster für Java, Kotlin und TypeScript/JavaScript; genauer über das IntelliJ-Plugin.
+- **Herkunft je Absatz:** Jeder Absatz trägt seine Quellen (Session mit Zitat, Commit, Ticket, Code-Anker, Datei, Review-Kommentar, Ihre Eingabe …) in den Metadaten; der Text bleibt sauberes Markdown. Der Tab **Herkunft** markiert jeden Absatz am Rand (belegt, unbelegt, Quelle veraltet), zeigt das Zitat beim Überfahren und filtert unbelegte Absätze; eine Quelle lässt sich von Hand angeben. Die Smiths liefern Belege je Absatz (`provenance.perParagraph`: aus, warnen, pflicht); ältere Belege zählen nur dort, wo ihr Zitat im Absatz steht.
+- **Qualitätswert 0–100** je Eintrag mit Begründung: belegte Absätze, Alter der Belege, Trefferquote der Hinweise, offene Zweifel und Konflikte, intakte Code-Anker, Gym-Urteil (Gewichte unter `quality.weights`). Sichtbar in Listen und im Eintrag; Hinweise bevorzugen gute Einträge, schwache kommen in den Eingang („Qualität prüfen“).
+- **Kreuzprüfung:** Mit einem Prüfmodell (`crosscheck.model`, ein anderes als das der Smiths) prüft ein zweites Modell jeden von der KI geänderten Absatz gegen seine Quelle: gestützt → geschrieben, nicht gestützt → Vorschlag mit Begründung, widersprochen → abgelehnt (Audit). Ohne Prüfmodell ist die Kreuzprüfung aus.
+- **Gym** (Qualität → Gym): Hilft ein Eintrag wirklich? Dieselbe Aufgabe ohne und mit Eintrag, mehrere Läufe je Arm (gleiches Modell, `build`-Agent, MCP/Web/Subagenten aus), nur deterministisch prüfbar (Antwort enthält, Reihenfolge, Befehl ausgeführt, Exit 0, Ausgabe gleich). Aufgaben legen Sie an oder lassen sie aus früheren Sessions vorschlagen; die Aufgabe darf die Lösung nicht verraten. Urteil hilft / neutral / schadet / ungenutzt fließt in den Qualitätswert; Folgen anfangs nur als Bericht (`gym.consequence`).
+
+### Review-Wissen aus GitHub
+
+Unter **Qualität → Review-Wissen** und als Job: Review-Kommentare neuer PRs der Repositories in `reviews.repos` (über `gh`, sonst Ihr GitHub-MCP in einer nur lesenden Session) werden gebündelt; ab 3 ähnlichen Kommentaren von 2 Personen entsteht ein Kandidat. Bestätigt wird er zur **Vorgabe** (Projekt oder Team) oder zum Skill – die Kommentare hängen als Herkunft daran; abgelehnte kommen nicht wieder. Die **Vor-PR-Prüfung** vergleicht den Diff Ihres Branches mit den Vorgaben (Befunde an Datei und Zeile): als `/smith-pr-check`, `smith pr-check` und als Prüfschritt `pr-check` einer Board-Spalte. Namen erscheinen nur als Quelle, es gibt keine Auswertung je Person.
+
+### Dokument-Import
+
+**Wissen → Import:** PDF, Word (DOCX, ältere DOC auf macOS), PowerPoint, Markdown und Text per Klick oder Drag & Drop. Der Text wird lokal gelesen (PDF mit dem mitgelieferten pdf.js im Browser), links erscheinen die Seiten, rechts die Funde live: Wissen (Ordner `import/<Datei>`), Glossar- und Runbook-Kandidaten, Vorgaben, Entscheidungen (vorgeschlagen), Aufgaben-Vorschläge. Jeder Fund trägt Datei, Seite/Folie und das wörtliche Zitat – ein Zitat, das nicht in der Datei steht, verwirft skillsmith. Funde übernehmen, bearbeiten, mit einem Eintrag zusammenführen („ergänzt Eintrag X“) oder verwerfen; **Übernehmen** schreibt alles in einem Commit, das Original liegt als Anhang daneben (bis `import.storeMaxMB`). KI-Recht je Import (Standard „vorschlag“). Gescannte PDFs ohne Textebene werden gemeldet (keine Texterkennung).
+
+### Bibliothek: Skripte, Snippets, Prompts
+
+- **Skripte** gibt es jetzt auch in **TypeScript** (node ≥ 22.18, sonst das Bun in opencode) – gleiche Prüfung, Sandbox und Freigabe wie Python. Neue Skripte haben einen einheitlichen Aufruf **`call_script(name, params)`**: Parameter und Ergebnis als JSON-Schema in `SCRIPT.md`, JSON auf stdin, Hülle `{ok, data, error}` auf stdout. Agenten nutzen das Werkzeug `call_script`, in der Weboberfläche „Ausführen“ (Formular aus dem Schema), im Terminal `smith run`.
+- **Snippets** (Bibliothek → Snippets): Code mit Platzhaltern `${name}` / `${name:standard}`, ausfüllen und kopieren, `smith snippet <name>`, Export als IntelliJ-Live-Templates; erscheinen in den Hinweisen. Derselbe Code in mehreren Sessions wird als Snippet vorgeschlagen.
+- **Prompts** (Bibliothek → Prompts): Text mit `{{ticket}}`, `{{branch}}`, `{{auswahl}}` …; in opencode **`/prompt <name> [var=wert …] [text]`** (ein Befehl, neue Prompts ohne Neustart), Variablen aus dem Kontext. Nutzung und Bewertung je Fassung; der Job „Prompts verbessern“ schlägt Diffs vor. `{{prompt:name}}` bindet einen Prompt in Agenten-Prompts ein.
+
 ### Eingang: Meldungen abstellen
 
 Jede Meldungsart im Eingang lässt sich **direkt im Eingang** einstellen (Menü an der Gruppe oder „Einstellen“): **anzeigen**, **bündeln** (eine Zeile je Gruppe, Standard für KI-Änderungen) oder **ausblenden**; KI-Änderungen auch je Smith. Einzelne Meldungen lassen sich wegklicken – sie kommen erst wieder, wenn sich der Inhalt ändert. Im selben Dialog stellen Sie die Benachrichtigungen (Toast, Browser, macOS) je Ereignis ein. Der Zähler in der Navigation zählt gebündelte Gruppen einmal.
@@ -311,6 +333,35 @@ Jede Meldungsart im Eingang lässt sich **direkt im Eingang** einstellen (Menü 
 ### Sicherheit beim Schreiben
 
 Jede Aktion läuft durch dieselben Prüfungen wie bei den Agenten (Validierung, Geheimnis-Scan, Versionsprüfung), ist **ein Lauf mit höchstens einem Commit** (`<smith>(web): …`) und steht im Audit-Log; „Rückgängig“ nimmt den Lauf per `git revert` zurück. Lokale Daten (Arbeitsstände, Läufe, Reihenfolge) bekommen keinen Commit, aber ein Vorher/Nachher im Audit-Log. Der Server nimmt nur `127.0.0.1` und `localhost` als Host an (DNS-Rebinding), verlangt den Schlüssel im Header, bei Schreibzugriffen die eigene Herkunft (CSRF) und JSON, lädt nichts von außen (strenge Content-Security-Policy). Jeder Wert ist eine Option; die Schlüsselpflicht lässt sich mit `"web": { "token": false }` abschalten – dann kann jeder Prozess auf diesem Rechner lesen und schreiben, die Oberfläche zeigt „ohne Token“; Agenten starten/freigeben und Pipeline-Befehle ändern verlangen den Schlüssel trotzdem (`tasks.requireToken`, `pipeline.requireToken`). „Schreiben sperren“ in den Einstellungen sperrt bis zum Neustart, `web.readOnly` dauerhaft.
+
+## smith – skillsmith im Terminal
+
+`smith` erreicht skillsmith aus jedem Terminal, ohne opencode zu öffnen, und ohne zusätzliche Installation:
+
+```bash
+alias smith='BUN_BE_BUN=1 opencode ~/.config/opencode/plugins/skillsmith/bin/smith.ts'
+# oder mit node ≥ 22.18:
+alias smith='node ~/.config/opencode/plugins/skillsmith/bin/smith'
+```
+
+| Befehl | Wirkung |
+|---|---|
+| `smith ask "…"` | Frage an den Wissens-Chat, Antwort mit Quellen |
+| `smith note "…"` | Schnellnotiz mit Verzeichnis, Projekt und Branch |
+| `smith task neu "…"` / `smith task T-12 [spalte]` | Aufgabe anlegen / anzeigen bzw. verschieben |
+| `smith find "…"` | Suche über alle Arten |
+| `smith run <skript> --param k=v` | Skript über `call_script` |
+| `smith snippet <name> k=v` | Snippet ausgefüllt in die Zwischenablage |
+| `smith prompt <name> k=v [text]` | Prompt ausführen (`--copy`: nur ausfüllen) |
+| `smith import <datei>` | Datei an die Import-Seite übergeben |
+| `smith pr-check [basis]` | Vor-PR-Prüfung des aktuellen Branches |
+| `smith status` | wartende Freigaben, laufende Agenten, rote Pipelines, Jobs |
+
+Die CLI spricht die laufende Instanz über die Web-API an (Token aus `state/web.json`, nur für Ihren Benutzer lesbar). Läuft keine Instanz, öffnet sie den Store direkt für Notizen, Aufgaben und Suche (mit dem Bun aus opencode); `ask`, `prompt` und `pr-check` brauchen ein laufendes opencode. `--json` liefert maschinenlesbare Ausgabe, z. B. für einen macOS-Kurzbefehl mit Tastenkürzel („Shell-Skript ausführen“ → `smith note "$(pbpaste)"`).
+
+## IntelliJ-Plugin
+
+Quellen unter `integrations/intellij` (Bauen und Installieren: dortige README): Randsymbole an Klassen und Methoden mit verankertem Wissen, Werkzeugfenster mit Aufgaben des Branches, Aufträgen und Freigaben, Kontextmenü „Als Wissen speichern“, „Code-Anker kopieren“, „Snippet einfügen“, Fehler aus der Run-Konsole an errorsmith.
 
 ## Eigenständige Anwendung (CLI)
 
@@ -763,6 +814,9 @@ Alle Dateien sind Markdown mit Frontmatter und können von Hand bearbeitet werde
 - Pipeline und Agenten-Aufträge laufen nur, solange opencode läuft; ein unterbrochener Pipeline-Lauf wird beim nächsten Start als unterbrochen markiert. Die Pipeline ersetzt nicht die echte CI (gleiche Befehle, Ihre lokale Umgebung).
 - Ein Agent arbeitet mit Ihren Rechten auf Ihrem Rechner – darum Vorschlag zuerst, Worktree und Ihre Abnahme.
 - Linux hat keine vollwertige Test-Sandbox (nur Netzwerk-Isolation via `unshare`, falls erlaubt).
+- Code-Anker werden per Muster aufgelöst (Java, Kotlin, TypeScript/JavaScript); Umbenennungen erkennt skillsmith über git und den Symbolnamen, nicht über eine echte Symbolauflösung.
+- Gym-Läufe im Modus „arbeiten“ laufen in einem git-Worktree des Projekts; die Shell des Agenten läuft dort nicht in `sandbox-exec` (das kann opencode nicht), nur Prüfbefehle von skillsmith.
+- Die Menüleisten-App ist noch nicht umgesetzt; das IntelliJ-Plugin liegt als Quellcode vor und muss gebaut werden.
 
 ## Fehlersuche
 

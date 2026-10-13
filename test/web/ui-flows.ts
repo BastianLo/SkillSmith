@@ -170,7 +170,11 @@ await page.waitForTimeout(800)
 // 8. palette: jump to an entry
 {
   await go("#/", 600)
+  // the pointer of the previous flow must not rest on a palette row (hover selects it)
+  await page.mouse.move(1, 1)
   await page.keyboard.press("Control+k")
+  // the palette module is loaded on demand: type only when its input has the focus
+  await page.waitForFunction(() => document.activeElement === document.querySelector(".palette input"), null, { timeout: 10_000 }).catch(() => undefined)
   await page.keyboard.type("Auth-Gateway")
   // the entry search is debounced and asynchronous: wait until the entry is listed first
   await page.waitForFunction(() => document.querySelector(".palette .item.on")?.textContent?.includes("Auth-Gateway") && document.querySelector(".palette .item.on .grp")?.textContent === "Eintrag", null, { timeout: 15_000 }).catch(() => undefined)

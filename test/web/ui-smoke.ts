@@ -66,6 +66,14 @@ const routes: Array<[string, string, string?]> = [
   ["51-code-datei", "#/code?pfad=src%2FTokenStore.java&projekt=kundenportal"],
   ["52-dokument-anker", "#/eintrag/knowledge%3Arefresh-token-sperren"],
   ["53-herkunft", "#/eintrag/knowledge%3Agateway-token-cache?tab=herkunft"],
+  ["54-gym", "#/gym"],
+  ["55-review-wissen", "#/review-wissen"],
+  ["56-import", "#/import"],
+  ["57-snippets", "#/liste/snippet"],
+  ["58-prompts", "#/liste/prompt"],
+  ["59-neues-snippet", "#/neu/snippet"],
+  ["60-snippet", "#/eintrag/snippet%3Aslf4j-logger"],
+  ["61-import-detail", "#/import"],
 ]
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium" })
