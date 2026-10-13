@@ -138,6 +138,8 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
   logHandle.configure({ redact: (s) => redactor.redact(s) })
   const index = new SearchIndex(store, options.indexForeignSkills)
   const embedClient = new EmbeddingClient(options.embedding, log.child("embed"))
+  // the opencode 2 adapter reports providers that arrive after the config hook
+  if (input.skillsmithBridge && typeof input.skillsmithBridge === "object") input.skillsmithBridge.configureProviders = (cfg: AnyRecord) => embedClient.configureFromOpencode(cfg)
   const vectorStore = options.embedding.enabled
     ? await openVectorStore(join(store.stateDir, "embeddings"), store.locksDir, log.child("embed"), { storage: options.embedding.storage })
     : undefined
