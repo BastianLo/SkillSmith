@@ -309,7 +309,7 @@ export const ENTRY_ACTIONS: ActionDef[] = [
       if (!old.main) throw new GuardError(`Version ${a.hash.slice(0, 8)} enthält ${a.target} nicht`)
       const c = spec(kind).parse(old.main, name)
       if (kind === "script") {
-        const f = scriptFiles(name)
+        const f = scriptFiles(name, str(c.fields.language))
         const check = await ctx.workshop.recheck({
           name,
           isNew: false,

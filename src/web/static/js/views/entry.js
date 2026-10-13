@@ -165,7 +165,8 @@ function kindActions(data, id, reload) {
       }),
     )
   }
-  if (kind === "script") out.push(btn("Neu testen", "script.retest", { target: id }, "play"), h("a", { class: "btn", href: `#/werkstatt/${encodeURIComponent(nameOf(id))}` }, icon("workshop", 14), "Werkstatt"))
+  if (kind === "script") out.push(h("button", { class: "btn", type: "button", onclick: () => runScriptDialog(data, id) }, icon("play", 14), "Ausführen"))
+  if (kind === "script") out.push(btn("Neu testen", "script.retest", { target: id }, "refresh"), h("a", { class: "btn", href: `#/werkstatt/${encodeURIComponent(nameOf(id))}` }, icon("workshop", 14), "Werkstatt"))
   if (kind === "glossary") out.push(h("a", { class: "btn", href: `#/glossar?q=${encodeURIComponent(data.rawFields?.term || data.title)}`, text: "In der Glossar-Tabelle" }))
   if (id.startsWith("state:")) {
     out.push(
@@ -188,6 +189,38 @@ function kindActions(data, id, reload) {
     )
   }
   return out
+}
+
+/** Run a script: a form from its params schema (call_script), or a command line for older scripts. */
+async function runScriptDialog(data, id) {
+  const schema = data.rawFields?.params
+  const props = schema?.properties || {}
+  const inputs = {}
+  const res = await modal((close) => {
+    const fields = schema
+      ? Object.entries(props).map(([k, p]) => {
+          const el = p.type === "boolean" ? h("input", { type: "checkbox" }) : h("input", { class: "input wide", placeholder: p.type || "", value: p.default !== undefined ? String(p.default) : "" })
+          inputs[k] = { el, type: p.type }
+          return h("div", { class: "field" }, h("label", { text: `${k}${(schema.required || []).includes(k) ? " *" : ""}` }), el, p.description ? h("div", { class: "faint", text: p.description }) : null)
+        })
+      : [h("div", { class: "field" }, h("label", { text: "Argumente (eine Zeile, durch Leerzeichen getrennt)" }), (inputs.__args = { el: h("input", { class: "input wide mono", placeholder: data.rawFields?.usage || "" }) }).el)]
+    const out = h("pre", { class: "mono", style: { maxHeight: "300px", overflow: "auto", whiteSpace: "pre-wrap" } })
+    const run = async () => {
+      const args = {}
+      if (schema) {
+        const params = {}
+        for (const [k, { el, type }] of Object.entries(inputs)) {
+          if (type === "boolean") params[k] = el.checked
+          else if (el.value !== "") params[k] = type === "number" || type === "integer" ? Number(el.value) : type === "object" || type === "array" ? JSON.parse(el.value) : el.value
+        }
+        args.params = params
+      } else args.args = inputs.__args.el.value.split(/\s+/).filter(Boolean)
+      const r = await act("script.run", { target: id, ...args }, { quiet: true })
+      out.textContent = r ? JSON.stringify(r.data, null, 2) : "fehlgeschlagen"
+    }
+    return { title: `${data.title} ausführen`, wide: true, body: [...fields, out], foot: [h("button", { class: "btn", type: "button", text: "Schließen", onclick: () => close(undefined) }), h("button", { class: "btn primary", type: "button", text: "Ausführen", onclick: run })] }
+  })
+  void res
 }
 
 /** Work state editor: tick open items, add, reorder next steps, change the goal (local). */

@@ -315,10 +315,13 @@ const SPECS: Record<Kind, KindSpec> = {
         tags: normalizeTags(fm.tags),
         fields: {
           usage: str(fm.usage),
-          entry: str(fm.entry) || `${name.replace(/-/g, "_")}.py`,
+          language: str(fm.language) === "typescript" ? "typescript" : "python",
+          entry: str(fm.entry) || `${name.replace(/-/g, "_")}.${str(fm.language) === "typescript" ? "ts" : "py"}`,
           capabilities: strArray(fm.capabilities),
           requirements: strArray(fm.requirements),
           python: str(fm.python),
+          ...(fm.params && typeof fm.params === "object" && !Array.isArray(fm.params) ? { params: fm.params } : {}),
+          ...(fm.result && typeof fm.result === "object" && !Array.isArray(fm.result) ? { result: fm.result } : {}),
           ...commonIn(fm),
         },
         body,
@@ -330,10 +333,13 @@ const SPECS: Record<Kind, KindSpec> = {
           ["name", e.name],
           ["description", e.description],
           ["usage", str(e.fields.usage)],
+          ["language", str(e.fields.language) === "typescript" ? "typescript" : undefined],
           ["entry", str(e.fields.entry)],
           ["capabilities", strArray(e.fields.capabilities)],
           ["requirements", strArray(e.fields.requirements)],
           ["python", str(e.fields.python)],
+          ["params", e.fields.params && typeof e.fields.params === "object" ? e.fields.params : undefined],
+          ["result", e.fields.result && typeof e.fields.result === "object" ? e.fields.result : undefined],
           ["tags", e.tags],
           ...commonOut(e.fields),
         ],
@@ -635,8 +641,14 @@ export const TIER_LABEL: Record<string, string> = {
   foreign: "extern",
 }
 
-/** module file names of a script entry */
-export function scriptFiles(name: string): { module: string; code: string; test: string } {
+/** module file names of a script entry (python: <m>.py + test_<m>.py; typescript: <m>.ts + <m>.test.ts) */
+export function scriptFiles(name: string, language?: string): { module: string; code: string; test: string } {
   const module = name.replace(/-/g, "_")
+  if (language === "typescript") return { module, code: `${module}.ts`, test: `${module}.test.ts` }
   return { module, code: `${module}.py`, test: `test_${module}.py` }
+}
+
+/** Language of a script entry (field "language", else from the entry file). */
+export function scriptLanguage(e: Pick<Entry, "fields">): "python" | "typescript" {
+  return str(e.fields.language) === "typescript" || /\.ts$/.test(str(e.fields.entry)) ? "typescript" : "python"
 }

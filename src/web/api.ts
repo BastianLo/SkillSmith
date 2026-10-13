@@ -12,7 +12,7 @@ import type { Ctx } from "../core/context"
 import { str, strArray } from "../core/frontmatter"
 import { isStoreId, nodeLabel, RELATION_LABEL, type GraphEdge, type GraphNode } from "../core/graph"
 import { graphAt, semanticMap, shortestPath } from "../core/graph-extra"
-import { aiAccessOf, isOwnDoc, meaningsOf, MEMORY_TYPE_LABEL, scriptFiles, spec, TIER_LABEL } from "../core/kinds"
+import { aiAccessOf, isOwnDoc, meaningsOf, MEMORY_TYPE_LABEL, scriptFiles, scriptLanguage, spec, TIER_LABEL } from "../core/kinds"
 import { M } from "../core/metrics"
 import { inbox, markVisited } from "../core/inbox"
 import { provenanceView, PROVENANCE_KINDS } from "../core/provenance"
@@ -201,8 +201,8 @@ export class ReadApi {
       case "workshop": {
         const e = ctx.store.getOwned("script", q.get("name") ?? "")
         if (!e) throw new NotFound("Skript nicht gefunden")
-        const f = scriptFiles(e.name)
-        return { name: e.name, description: e.description, usage: str(e.fields.usage), capabilities: strArray(e.fields.capabilities), requirements: strArray(e.fields.requirements), tags: e.tags, docs: e.body, code: ctx.store.readFileOf(e, f.code) ?? "", tests: ctx.store.readFileOf(e, f.test) ?? "", test: e.meta?.test ?? null, runs: entryUsage(ctx, `script:${e.name}`, 90) }
+        const f = scriptFiles(e.name, scriptLanguage(e))
+        return { name: e.name, language: scriptLanguage(e), params: e.fields.params ?? null, result: e.fields.result ?? null, description: e.description, usage: str(e.fields.usage), capabilities: strArray(e.fields.capabilities), requirements: strArray(e.fields.requirements), tags: e.tags, docs: e.body, code: ctx.store.readFileOf(e, f.code) ?? "", tests: ctx.store.readFileOf(e, f.test) ?? "", test: e.meta?.test ?? null, runs: entryUsage(ctx, `script:${e.name}`, 90) }
       }
       case "exports":
         return this.exports()

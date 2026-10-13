@@ -13,7 +13,7 @@ import { sessionSignals } from "../core/agent-runner"
 import type { Ctx } from "../core/context"
 import { sessionInfo } from "../core/services"
 import { str as fmStr, strArray } from "../core/frontmatter"
-import { isPrivate, meaningsOf, scriptFiles, spec, TIER_LABEL } from "../core/kinds"
+import { isPrivate, meaningsOf, scriptFiles, scriptLanguage, spec, TIER_LABEL } from "../core/kinds"
 import { isStoreId, nodeLabel, RELATION_LABEL } from "../core/graph"
 import { formatMemoryEntry, formatResult, formatState, memoryLine, relationLine, relationLines } from "../core/memory-format"
 import { GuardError, normalizeNodeId, normalizeQuote } from "../core/ops"
@@ -24,6 +24,21 @@ import type { Entry, Kind, Run, SearchHit, Smith, Tier } from "../types"
 import { key } from "../types"
 import { errorMessage, fold, nowIso, tokenize, truncate } from "../util/text"
 import { buildArgs, type ArgSpecs } from "./schema"
+import { callScript } from "../core/scripts"
+
+/** A JSON object given as string (schemas of toolsmith_draft). */
+function jsonObj(v: unknown, what: string): Record<string, unknown> | undefined {
+  const s = typeof v === "string" ? v.trim() : ""
+  if (!s) return undefined
+  let o: unknown
+  try {
+    o = JSON.parse(s)
+  } catch {
+    throw new GuardError(`${what} must be a JSON object`)
+  }
+  if (!o || typeof o !== "object" || Array.isArray(o)) throw new GuardError(`${what} must be a JSON object`)
+  return o as Record<string, unknown>
+}
 
 export const READ_TOOLS = [
   "skill_search",
@@ -469,6 +484,31 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
         }),
     ),
 
+    call_script: def(
+      "Run a published, tested script of the store: call_script(name, params). params is a JSON object that matches the script's params schema (see script_read); the result comes back as JSON {ok, data, error}. Older scripts without schema take args (command line) instead. Runs with a time limit (and in the sandbox for risky scripts).",
+      {
+        name: { kind: "string", description: "Script name (script_search / script_list)" },
+        params: { kind: "string", description: 'JSON object with the parameters, e.g. {"input": "a.csv"}', optional: true },
+        args: { kind: "string[]", description: "Command line arguments (only scripts without params schema)", optional: true },
+      },
+      async (args, context) => {
+        let params: unknown
+        if (str(args.params).trim()) {
+          try {
+            params = JSON.parse(str(args.params))
+          } catch {
+            return "params must be a JSON object"
+          }
+        }
+        try {
+          const r = await callScript(ctx, str(args.name).trim(), { params, args: list(args.args), cwd: (context as ToolCtx).directory ?? ctx.directory, origin: "agent", session: (context as ToolCtx).sessionID })
+          return JSON.stringify({ ok: r.ok, ...(r.data !== undefined ? { data: r.data } : {}), ...(r.error ? { error: r.error } : {}), ...(r.stdout !== undefined ? { stdout: r.stdout } : {}), ms: r.ms }, null, 2)
+        } catch (err) {
+          return `call_script failed: ${errorMessage(err)}`
+        }
+      },
+    ),
+
     docs_search: def(
       "Search the documentation of THIS project (its .md files: README, docs/, ADRs …) by meaning and keywords. Returns file:line, the section heading and the passage – read the file for more.",
       {
@@ -526,7 +566,7 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
         const rec = aiStoreOf(ctx).getOwned("script", name)
         if (!rec) return notFound("script", name)
         used(context, "script", rec.name)
-        const f = scriptFiles(rec.name)
+        const f = scriptFiles(rec.name, scriptLanguage(rec))
         const entry = fmStr(rec.fields.entry) || f.code
         const t = rec.meta?.test
         const caps = strArray(rec.fields.capabilities)
@@ -1028,10 +1068,16 @@ export function createTools(ctx: Ctx, z: any | null): Record<string, ToolDef> {
         capabilities: capSpec,
         requirements: { kind: "string[]", description: "pip packages (only if unavoidable and allowed)", optional: true },
         tags: tagSpec,
+        language: { kind: "string", description: 'python (default) or typescript (node ≥ 22.18 / bun: <module>.ts + <module>.test.ts with node:test; no enum/namespace/parameter properties, relative imports with .ts)', optional: true },
+        params_schema: { kind: "string", description: "JSON schema of the parameters for call_script (params as JSON on stdin; helper: from smith_script import run / import { run } from \"./smith-script.ts\")", optional: true },
+        result_schema: { kind: "string", description: "JSON schema of the result (data of the {ok, data} envelope)", optional: true },
       },
       (args, context) =>
         withRun(context, "toolsmith", (run) =>
           ctx.workshop.draft(run, {
+            language: str(args.language) === "typescript" ? "typescript" : str(args.language) === "python" ? "python" : undefined,
+            params: jsonObj(args.params_schema, "params_schema"),
+            result: jsonObj(args.result_schema, "result_schema"),
             name: str(args.name),
             description: str(args.description),
             usage: str(args.usage),

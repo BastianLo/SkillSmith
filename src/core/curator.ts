@@ -16,9 +16,10 @@ import { agentSemaphore, runAgentSession } from "./agent-runner"
 import { dot } from "./embeddings"
 import type { Ctx } from "./context"
 import { describeActions, finalizeRun } from "./finalize"
-import { aiAccessOf, meaningsOf, scriptFiles, spec } from "./kinds"
+import { aiAccessOf, meaningsOf, scriptFiles, scriptLanguage, spec } from "./kinds"
 import { normalizeQuote } from "./ops"
 import { buildCuratorJob, curatorAgent, SMITHS } from "./prompts"
+import { checkTsDraft } from "./scripts"
 import { checkDraft, cleanupDrafts, pythonEnv } from "./pyworkshop"
 import { AGENT_TITLE_PREFIX, resolveModel } from "./reviewer"
 
@@ -420,16 +421,17 @@ export class Curator {
     const lines: string[] = []
     try {
       for (const s of scripts) {
-        const f = scriptFiles(s.name)
+        const lang = scriptLanguage(s)
+        const f = scriptFiles(s.name, lang)
         const code = this.ctx.store.readFileOf(s, f.code)
         const tests = this.ctx.store.readFileOf(s, f.test)
         if (code === undefined || tests === undefined) {
           lines.push(`${s.name}: Dateien fehlen`)
           continue
         }
-        const report = await checkDraft({
-          spec: {
+        const spec = {
             name: s.name,
+            language: lang,
             description: s.description,
             usage: String(s.fields.usage ?? ""),
             code,
@@ -438,8 +440,11 @@ export class Curator {
             requirements: (s.fields.requirements as string[]) ?? [],
             tags: s.tags,
             docs: s.body,
-          },
-          dir: join(this.ctx.store.stateDir, "drafts", run.id, s.name),
+          }
+        const dir = join(this.ctx.store.stateDir, "drafts", run.id, s.name)
+        const report = lang === "typescript" ? await checkTsDraft({ spec, dir, options: this.ctx.options, stateDir: this.ctx.store.stateDir, log: this.ctx.log }) : await checkDraft({
+          spec,
+          dir,
           env,
           options: this.ctx.options,
           log: this.ctx.log,

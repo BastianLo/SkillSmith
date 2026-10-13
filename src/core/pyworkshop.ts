@@ -105,7 +105,8 @@ export interface PyEnv {
   setting: string
 }
 
-function profile(writable: string): string {
+/** sandbox-exec profile: no network, writes only below `writable` (also used for node/bun scripts). */
+export function profile(writable: string): string {
   const q = (s: string) => JSON.stringify(s)
   return [
     "(version 1)",
@@ -229,6 +230,12 @@ export function pythonEnv(o: Options, stateDir: string, refresh = false): Promis
 
 export interface DraftSpec {
   name: string
+  /** runtime of the script (default python) */
+  language?: "python" | "typescript"
+  /** JSON schema of the parameters (call_script) */
+  params?: Record<string, unknown>
+  /** JSON schema of the result (call_script) */
+  result?: Record<string, unknown>
   description: string
   usage: string
   code: string
@@ -296,7 +303,7 @@ function writeDraftFiles(dir: string, spec: DraftSpec): { code: string; test: st
 
 /** Files of a script entry as written into the store. */
 export function draftFiles(spec: DraftSpec): Record<string, string> {
-  const f = scriptFiles(spec.name)
+  const f = scriptFiles(spec.name, spec.language)
   return {
     [f.code]: spec.code.replace(/\r\n/g, "\n").trimEnd() + "\n",
     [f.test]: spec.tests.replace(/\r\n/g, "\n").trimEnd() + "\n",
