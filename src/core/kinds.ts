@@ -589,6 +589,82 @@ const SPECS: Record<Kind, KindSpec> = {
       return [[4, e.name.replace(/-/g, " ")], [3, e.title], [2, e.description], [2, `${str(e.fields.role)} ${e.tags.join(" ")}`], [1, e.body]]
     },
   },
+  snippet: {
+    kind: "snippet",
+    smith: "skillsmith",
+    dir: "snippets",
+    layout: "file",
+    main: ".md",
+    tiers: ["active", "archive"],
+    label: "Snippet",
+    labelPlural: "Snippets",
+    aliases: ["snippet", "snippets", "schnipsel", "baustein"],
+    parse(content, fallbackName) {
+      const { fm, body } = parseDoc(content)
+      const name = str(fm.name) || fallbackName
+      const fields: Record<string, unknown> = { ...commonIn(fm), language: str(fm.language) || fenceLanguage(body) || "text" }
+      for (const k of ["origin", "test"]) if (str(fm[k])) fields[k] = str(fm[k])
+      return { name, title: str(fm.title) || name, description: str(fm.description), tags: normalizeTags(fm.tags), fields, body }
+    },
+    serialize(e) {
+      return serializeDoc(
+        [
+          ["name", e.name],
+          ["title", e.title !== e.name ? e.title : ""],
+          ["description", e.description],
+          ["language", str(e.fields.language)],
+          ["origin", str(e.fields.origin)],
+          ["test", str(e.fields.test)],
+          ["tags", e.tags],
+          ...commonOut(e.fields),
+        ],
+        e.body,
+      )
+    },
+    searchFields(e) {
+      return [[3, e.title], [2, e.name.replace(/-/g, " ")], [2, e.description], [3, `${e.tags.join(" ")} ${str(e.fields.language)}`], [1, e.body]]
+    },
+  },
+  prompt: {
+    kind: "prompt",
+    smith: "skillsmith",
+    dir: "prompts",
+    layout: "file",
+    main: ".md",
+    tiers: ["active", "archive"],
+    label: "Prompt",
+    labelPlural: "Prompts",
+    aliases: ["prompt", "prompts", "vorlage-prompt"],
+    parse(content, fallbackName) {
+      const { fm, body } = parseDoc(content)
+      const name = str(fm.name) || fallbackName
+      const fields: Record<string, unknown> = { ...commonIn(fm) }
+      for (const k of ["agent", "model"]) if (str(fm[k])) fields[k] = str(fm[k])
+      return { name, title: str(fm.title) || name, description: str(fm.description), tags: normalizeTags(fm.tags), fields, body }
+    },
+    serialize(e) {
+      return serializeDoc(
+        [
+          ["name", e.name],
+          ["title", e.title !== e.name ? e.title : ""],
+          ["description", e.description],
+          ["agent", str(e.fields.agent)],
+          ["model", str(e.fields.model)],
+          ["tags", e.tags],
+          ...commonOut(e.fields),
+        ],
+        e.body,
+      )
+    },
+    searchFields(e) {
+      return [[3, e.title], [3, e.name.replace(/-/g, " ")], [2, e.description], [2, e.tags.join(" ")], [1, e.body]]
+    },
+  },
+}
+
+/** Language of the first fenced code block ("```java" → java). */
+export function fenceLanguage(body: string): string {
+  return /^```([A-Za-z0-9_+#-]+)/m.exec(body)?.[1]?.toLowerCase() ?? ""
 }
 
 const MEMORY_TYPE_SET = new Set<string>(MEMORY_TYPES)

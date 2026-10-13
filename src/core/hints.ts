@@ -28,6 +28,8 @@ export interface HintSet {
   knowledge: SearchHit[]
   errors: SearchHit[]
   scripts: SearchHit[]
+  /** code snippets of the library (5j) */
+  snippets?: SearchHit[]
   /** similar earlier sessions with reusable results */
   sessions?: HistoryHit[]
   /** memorysmith: decisions, conventions, experiences and results of this project */
@@ -58,6 +60,9 @@ export function formatHint(set: HintSet & { project?: string }): string | undefi
   }
   if (set.scripts.length) {
     sections.push(`Skripte (script_read):\n${set.scripts.map((h) => `- ${h.name}: ${truncate(h.description, 140)}`).join("\n")}`)
+  }
+  if (set.snippets?.length) {
+    sections.push(`Snippets:\n${set.snippets.map((h) => `- ${h.name}: ${truncate(h.description, 120)}${h.snippet ? `\n  ${truncate(h.snippet.replace(/\s+/g, " "), 200)}` : ""}`).join("\n")}`)
   }
   if (set.memories?.length) {
     sections.push(`Erinnerungen (memory_read):\n${set.memories.map((m) => `- ${m.id} [${m.label}]: ${truncate(m.title, 100)}${m.summary && m.summary !== m.title ? ` – ${truncate(m.summary, 120)}` : ""}`).join("\n")}`)
@@ -163,7 +168,7 @@ export class HintEngine {
     const isError = o.errors && looksLikeError(query)
     const history = this.ctx.history
     const sessionMin = this.ctx.options.embedding.sessionHintSimilarity
-    const [skills, knowledge, errors, scripts, sessions] = await Promise.all([
+    const [skills, knowledge, errors, scripts, sessions, snippets] = await Promise.all([
       long ? search(["skill"], ["active", "dormant", "archive", "foreign"], 10) : Promise.resolve([]),
       o.knowledge && long ? search(["knowledge"], ["active"], 6) : Promise.resolve([]),
       isError ? search(["error"], ["active", "dormant"], 6) : Promise.resolve([]),
@@ -171,6 +176,7 @@ export class HintEngine {
       o.sessions && long && history?.enabled
         ? history.search(query, { limit: 5, exclude: sessionID, queryVector: vec, usefulOnly: true, minSimilarity: sessionMin }).catch(() => [])
         : Promise.resolve([]),
+      o.scripts && long ? search(["snippet"], ["active"], 4).catch(() => []) : Promise.resolve([]),
     ])
     // semantic: clearly similar; BM25 only: most query terms (≥ 3) in the record
     const similarSession = (h: HistoryHit) => (h.similarity ?? 0) >= sessionMin || (h.matched.length >= 3 && h.coverage >= 0.75)
@@ -192,6 +198,7 @@ export class HintEngine {
       knowledge: byQuality(knowledge.filter(isStrong)).slice(0, 2),
       errors: byQuality(errors.filter((h) => (h.confidence >= o.minScore && h.matched.length >= 2) || (h.similarity ?? 0) >= minSim)).slice(0, 2),
       scripts: byQuality(scripts.filter(isStrong)).slice(0, 2),
+      snippets: byQuality((snippets as SearchHit[]).filter(isStrong)).slice(0, 2),
       sessions: sessions.filter(similarSession).slice(0, 2),
       memories: await this.memories(query, vec, loaded, isStrong).catch(() => []),
     }
@@ -324,6 +331,7 @@ export class HintEngine {
       ...set.knowledge.map((h) => key("knowledge", h.name)),
       ...set.errors.map((h) => key("error", h.name)),
       ...set.scripts.map((h) => key("script", h.name)),
+      ...(set.snippets ?? []).map((h) => key("snippet", h.name)),
       ...(set.memories ?? []).map((m) => m.id),
     ]
     try {
@@ -346,6 +354,7 @@ export class HintEngine {
     for (const h of set.knowledge) this.ctx.usage.recordHintShown("knowledge", h.name, uc)
     for (const h of set.errors) this.ctx.usage.recordHintShown("error", h.name, uc)
     for (const h of set.scripts) this.ctx.usage.recordHintShown("script", h.name, uc)
+    for (const h of set.snippets ?? []) this.ctx.usage.recordHintShown("snippet", h.name, uc)
     for (const m of set.memories ?? []) if (m.id.startsWith("memory:")) this.ctx.usage.recordHintShown("memory", m.id.slice(7), uc)
     for (const e of set.glossary) {
       this.ctx.usage.recordHintShown("glossary", e.name, uc)

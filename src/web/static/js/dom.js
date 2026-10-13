@@ -144,6 +144,8 @@ export const KIND_LABEL = {
   ergebnis: "Ergebnis",
   session: "Session",
   code: "Code",
+  snippet: "Snippet",
+  prompt: "Prompt",
   agent: "Agent",
   settings: "Einstellung",
 }
@@ -160,9 +162,11 @@ export const KIND_PLURAL = {
   ergebnis: "Ergebnisse",
   session: "Sessions",
   code: "Code-Dateien",
+  snippet: "Snippets",
+  prompt: "Prompts",
   agent: "Agenten",
 }
-export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat", agent: "agent", code: "code" }
+export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat", agent: "agent", code: "code", snippet: "snippet", prompt: "prompt" }
 export const MEMORY_TYPES = { entscheidung: "Entscheidung", vorgabe: "Vorgabe", erfahrung: "Erfahrung" }
 export const MEMORY_PLURAL = { entscheidung: "Entscheidungen", vorgabe: "Vorgaben", erfahrung: "Erfahrungen" }
 export const STORE_KINDS = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"]

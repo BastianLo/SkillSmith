@@ -46,6 +46,8 @@
   --k-ergebnis: #9c6b39;
   --k-session: #94a0b2;
   --k-code: #5b6b8c;
+  --k-snippet: #3d7d8c;
+  --k-prompt: #9a5b2c;
   --k-agent: #8a4fd1;
   --k-task: #0b7fbf;
   --k-project: #47566b;
@@ -95,7 +97,11 @@
     --k-ergebnis: #cf9a5f;
     --k-session: #8792a3;
   --k-code: #8fa0c2;
+  --k-snippet: #6fb3c4;
+  --k-prompt: #d39461;
     --k-code: #8fa0c2;
+    --k-snippet: #6fb3c4;
+    --k-prompt: #d39461;
     --k-agent: #b48cf0;
     --k-task: #4fb3ea;
     --k-project: #93a3b8;

@@ -9,6 +9,8 @@ import type { Ctx } from "./context"
 import type { JobDef } from "./jobs"
 import { pruneLogs } from "./logs"
 import { reviewAgents } from "./agent-defs"
+import { askAssistant } from "./assistant"
+import { reviewPrompts } from "./library"
 
 const smithsParam = (v: string | undefined): Smith[] | undefined => {
   const list = (v ?? "")
@@ -131,6 +133,15 @@ export const BUILTIN_JOBS: JobDef[] = [
     defaults: () => ({ idleMin: 30, catchUp: "skip" }),
     unavailable: (ctx) => (!ctx.options.gym.enabled ? "Gym ist aus" : !ctx.gym?.tasks().some((t) => t.status === "aktiv") ? "keine aktiven Gym-Aufgaben" : undefined),
     run: (ctx, jr) => ctx.gym!.runJob(jr.trigger),
+  },
+  {
+    id: "prompt-review",
+    label: "Prompts verbessern",
+    description: "Prompts der Bibliothek, deren aktuelle Fassung mehrfach nachgebessert oder verworfen wurde, bekommen einen Verbesserungsvorschlag mit Diff (Sie geben frei).",
+    area: "library",
+    defaults: () => ({ intervalMin: 7 * 1440, catchUp: "once" }),
+    unavailable: (ctx) => (!ctx.store.list("prompt").length ? "keine Prompts in der Bibliothek" : undefined),
+    run: (ctx) => reviewPrompts(ctx, (p, t) => askAssistant(ctx, p, t)),
   },
   {
     id: "prune",

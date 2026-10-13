@@ -52,6 +52,7 @@ export const INBOX_TYPES: InboxTypeDef[] = [
   { type: "test", group: "Rote Skript-Tests", label: "rote Skript-Tests", description: "Der Retest eines Skripts ist fehlgeschlagen." },
   { type: "code-changed", group: "Code geändert", label: "Code geändert", description: "Verankerter Code ([[code:…]]) hat sich geändert, ist verschoben oder gelöscht – das Wissen dazu prüfen." },
   { type: "low-quality", group: "Qualität prüfen", label: "niedriger Qualitätswert", description: "Ein Eintrag hat einen niedrigen Qualitätswert (unbelegte Absätze, alte Belege, Zweifel, gebrochene Anker)." },
+  { type: "snippet-candidate", group: "Snippet-Vorschläge", label: "Snippet-Vorschläge", description: "Derselbe Code kam in mehreren Sessions vor – als Snippet übernehmen?" },
   { type: "broken-link", group: "Defekte Links", label: "defekte Links", description: "Ein [[Link]] zeigt auf einen Eintrag, den es nicht gibt." },
   { type: "abbreviation", group: "Offene Abkürzungen", label: "offene Abkürzungen", description: "Abkürzungen ohne bekannte Bedeutung." },
   { type: "project-doc", group: "Projekt-Doku prüfen", label: "Projekt-Doku prüfen", description: "docsmith hält eine Projekt-.md für veraltet." },
@@ -286,6 +287,11 @@ export function collect(ctx: Ctx, since: string): InboxItem[] {
     }
   } catch {
     // quality is optional
+  }
+  // repeated code → snippet (5j)
+  for (const c of ctx.library?.candidates().slice(0, 20) ?? []) {
+    const first = c.code.split("\n").find((l) => l.trim()) ?? ""
+    items.push({ id: `snippet-${c.id}`, type: "snippet-candidate", group: "Snippet-Vorschläge", title: truncate(first.trim(), 80), detail: `${c.language} · in ${c.sessions.length} Sessions`, at: c.last, severity: "info", actions: [{ action: "snippet.adopt", label: "Als Snippet übernehmen", args: { id: c.id, title: truncate(first.trim(), 60) || "Snippet" } }, { action: "snippet.dismiss", label: "Verwerfen", args: { id: c.id } }], data: { code: c.code } })
   }
   // agents
   items.push(...ctx.agentTasks.inboxItems())

@@ -52,6 +52,8 @@ export const AREAS = [
       { path: "liste/memory", label: "Erinnerungen", icon: "memory" },
       { path: "liste/arbeitsstand", label: "Arbeitsstände", icon: "state" },
       { path: "liste/ergebnis", label: "Ergebnisse", icon: "result" },
+      { path: "liste/snippet", label: "Snippets", icon: "snippet" },
+      { path: "liste/prompt", label: "Prompts", icon: "prompt" },
     ],
   },
   {

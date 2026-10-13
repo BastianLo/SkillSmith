@@ -6,6 +6,7 @@ import type { Anchors } from "./anchors"
 import type { QualityEngine } from "./quality"
 import type { CrossCheck } from "./crosscheck"
 import type { Gym } from "./gym"
+import type { Library } from "./library"
 import type { AuditLog } from "./audit"
 import type { EventBus } from "./bus"
 import type { Doctor } from "./doctor"
@@ -97,6 +98,8 @@ export interface Ctx {
   crosscheck?: CrossCheck
   /** A/B runs: does an entry help the agents? (5d) */
   gym?: Gym
+  /** snippets and prompts: usage, candidates (5j) */
+  library?: Library
   /** tasks delegated to opencode agents */
   agentTasks: AgentTasks
   /** review queue and curator of this instance (web actions "review now", "curate") */

@@ -7,6 +7,7 @@ import type { Ctx } from "../core/context"
 import { groupByRun, readLogs, tailLogs, type LogFilter } from "../core/logs"
 import type { Level } from "../log"
 import { LEVELS } from "../log"
+import { liveTemplates } from "../core/library"
 
 export type Endpoint = (ctx: Ctx, q: URLSearchParams) => unknown | Promise<unknown>
 
@@ -61,6 +62,12 @@ export const ENDPOINTS: Record<string, Endpoint> = {
     const rounds = st.rounds.filter((r) => !entry || r.entry === entry).slice(-100).reverse()
     return { available: true, consequence: ctx.options.gym.consequence, tasks, rounds, suppressed: st.suppressed, archived: st.archived }
   },
+  // snippet and prompt library (5j)
+  library: (ctx) => ({
+    candidates: ctx.library?.candidates() ?? [],
+    prompts: ctx.store.list("prompt").map((p) => ({ name: p.name, title: p.title, stats: ctx.library?.promptStats(p.name) ?? [] })),
+  }),
+  "library/live-templates": (ctx) => ({ xml: liveTemplates(ctx.store.list("snippet").filter((e) => e.tier === "active")) }),
   "code/file": (ctx, q) => {
     const path = q.get("path") ?? ""
     const project = q.get("project") || undefined

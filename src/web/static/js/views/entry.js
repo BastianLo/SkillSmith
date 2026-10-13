@@ -4,7 +4,7 @@ import { auditTab, conflictsBlock, entryHead, evidenceBlock, factsBlock, history
 import { act, app, confirmDialog, fill, modal, moreButton, previewDialog, promptDialog, tabBar, toast } from "../ui.js"
 import { anchorsBlock, provenanceTab, qualityBlock, qualityChip } from "../quality.js"
 
-const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"])
+const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "snippet", "prompt"])
 
 /** Banner for open AI proposals of an entry (diff, accept, adjust, reject). */
 export function proposalsBanner(data, onDone) {
@@ -166,6 +166,7 @@ function kindActions(data, id, reload) {
     )
   }
   if (kind === "script") out.push(h("button", { class: "btn", type: "button", onclick: () => runScriptDialog(data, id) }, icon("play", 14), "Ausführen"))
+  if (kind === "snippet" || kind === "prompt") out.push(h("button", { class: "btn", type: "button", onclick: () => fillDialog(data, id, kind) }, icon("copy", 14), "Ausfüllen und kopieren"))
   if (kind === "script") out.push(btn("Neu testen", "script.retest", { target: id }, "refresh"), h("a", { class: "btn", href: `#/werkstatt/${encodeURIComponent(nameOf(id))}` }, icon("workshop", 14), "Werkstatt"))
   if (kind === "glossary") out.push(h("a", { class: "btn", href: `#/glossar?q=${encodeURIComponent(data.rawFields?.term || data.title)}`, text: "In der Glossar-Tabelle" }))
   if (id.startsWith("state:")) {
@@ -221,6 +222,43 @@ async function runScriptDialog(data, id) {
     return { title: `${data.title} ausführen`, wide: true, body: [...fields, out], foot: [h("button", { class: "btn", type: "button", text: "Schließen", onclick: () => close(undefined) }), h("button", { class: "btn primary", type: "button", text: "Ausführen", onclick: run })] }
   })
   void res
+}
+
+/** Snippet (${name}) or prompt ({{var}}): a field per placeholder, preview, copy. */
+async function fillDialog(data, id, kind) {
+  const re = kind === "snippet" ? /\$\{([A-Za-z_][\w-]*)(?::([^}]*))?\}/g : /\{\{\s*([A-Za-z_][\w-]*)\s*\}\}/g
+  const names = [...new Map([...data.body.matchAll(re)].map((m) => [m[1], m[2]])).entries()]
+  const inputs = {}
+  await modal((close) => {
+    const out = h("pre", { class: "mono", style: { maxHeight: "320px", overflow: "auto", whiteSpace: "pre-wrap" } })
+    const preview = async () => {
+      const values = Object.fromEntries(Object.entries(inputs).filter(([, el]) => el.value !== "").map(([k, el]) => [k, el.value]))
+      const r = await post(kind === "snippet" ? "snippet.fill" : "prompt.fill", { target: id, values }).catch(() => null)
+      out.textContent = r?.data?.text ?? ""
+      return out.textContent
+    }
+    const fields = names.map(([n, def]) => {
+      const el = h("input", { class: "input wide", placeholder: def ?? (kind === "prompt" ? "leer = aus dem Kontext" : ""), oninput: () => preview() })
+      inputs[n] = el
+      return h("div", { class: "field" }, h("label", { text: n }), el)
+    })
+    preview()
+    return {
+      title: `${data.title} ausfüllen`,
+      wide: true,
+      body: [...fields, out],
+      foot: [
+        h("button", { class: "btn", type: "button", text: "Schließen", onclick: () => close(undefined) }),
+        kind === "prompt" ? h("button", { class: "btn", type: "button", text: "👎 nachgebessert", onclick: async () => (await act("prompt.feedback", { target: id, good: false }, { quiet: true }), toast("vermerkt")) }) : null,
+        kind === "prompt" ? h("button", { class: "btn", type: "button", text: "👍 gut", onclick: async () => (await act("prompt.feedback", { target: id, good: true }, { quiet: true }), toast("vermerkt")) }) : null,
+        h("button", { class: "btn primary", type: "button", text: "Kopieren", onclick: async () => {
+          const text = await preview()
+          await navigator.clipboard?.writeText(text).catch(() => undefined)
+          toast("In die Zwischenablage kopiert", { variant: "success" })
+        } }),
+      ],
+    }
+  })
 }
 
 /** Work state editor: tick open items, add, reorder next steps, change the goal (local). */

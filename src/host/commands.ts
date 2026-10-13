@@ -35,6 +35,8 @@ export interface CommandDef {
   description: string
 }
 
+import { LIBRARY_COMMANDS, promptCommand } from "./library-commands"
+
 export const COMMANDS: CommandDef[] = [
   { name: "smith-help", usage: "/smith-help", description: "skillsmith: Übersicht aller Befehle" },
   { name: "smith-report", usage: "/smith-report", description: "skillsmith: Status aller Smiths, Queue, Modell, Nutzung, letzte Commits" },
@@ -70,6 +72,7 @@ export const COMMANDS: CommandDef[] = [
   { name: "note", usage: "/note <text>", description: "skillsmith: Schnellnotiz ins Dokument „Eingang“ (mit Session-Link)" },
   { name: "doc", usage: "/doc <thema> [| vorlage]", description: "docsmith: aus dieser Session ein Dokument schreiben lassen (Entwurf als Ihr Dokument)" },
   ...MEMORY_COMMANDS,
+  ...LIBRARY_COMMANDS,
 ]
 
 export const COMMAND_NAMES = new Set(COMMANDS.map((c) => c.name))
@@ -377,6 +380,8 @@ export async function handleCommand(ctx: Ctx, deps: CommandDeps, name: string, r
   const memoryResult = await memoryCommand(ctx, deps.queue, mutate, name, args, sessionID)
   if (memoryResult !== undefined) return memoryResult
   switch (name) {
+    case "prompt":
+      return (await promptCommand(ctx, args)).text
     case "smith-help":
       return [
         "**skillsmith Befehle** (skillsmith · docsmith · errorsmith · toolsmith · memorysmith · doctor)",

@@ -456,7 +456,7 @@ export class Ops {
     const nameErr = validateName(c.name)
     if (nameErr) throw new GuardError(nameErr)
     const warnings: string[] = []
-    if (kind === "task" || kind === "project" || kind === "agent" || (kind === "knowledge" && user)) {
+    if (kind === "task" || kind === "project" || kind === "agent" || kind === "snippet" || kind === "prompt" || (kind === "knowledge" && user)) {
       // the user's documents, tasks, projects and agent prompts: free form, longer, still checked for secrets
       const t = c.title.trim()
       if (!t || /\n/.test(t) || t.length > 160) throw new GuardError("title must be a single line of 1–160 characters")
