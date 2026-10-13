@@ -1,7 +1,7 @@
 /** Shared end-of-run handling: git commit, journal entry, run cleanup. */
 import { appendFileSync } from "node:fs"
 import { join } from "node:path"
-import type { Run } from "../types"
+import { isSystemTarget, type Run } from "../types"
 import { ensureDir } from "../util/fs"
 import { errorMessage, nowIso } from "../util/text"
 import { auditActor, gateOf, type AuditInput } from "./audit"
@@ -56,12 +56,29 @@ export async function finalizeRun(ctx: Ctx, run: Run, outcome: { ok: boolean; er
   } catch (err) {
     ctx.log.warn("audit/metrics of run failed", errorMessage(err))
   }
+  // settings.json changed by this run (settings page, undo, restore) → apply the values
+  if (run.touched.has("settings.json")) {
+    try {
+      ctx.settings?.refreshIfChanged()
+    } catch (err) {
+      ctx.log.warn("settings refresh failed", errorMessage(err))
+    }
+  }
   try {
     ctx.doctor?.onRunFinished(run)
   } catch (err) {
     ctx.log.debug("doctor queue failed", errorMessage(err))
   }
   ctx.runs.end(run)
+  // e.g. an agent step started by a web action: it writes the task in its own run, which would
+  // otherwise wait for this run's claim on the same file
+  for (const fn of run.followUps?.splice(0) ?? []) {
+    try {
+      await fn()
+    } catch (err) {
+      ctx.log.warn(`follow-up of ${run.id} failed`, errorMessage(err))
+    }
+  }
   return { commit, applied, proposed }
 }
 
@@ -88,8 +105,9 @@ function recordRun(ctx: Ctx, run: Run, outcome: { ok: boolean; error?: string },
     // never write a target that cannot be resolved later ("undefined:undefined")
     if (a.local ? !a.name : !a.target || !a.name) continue
     const id = a.local ? a.name : `${a.target}:${a.name}`
-    const change = a.local ? local.get(a.name) : undefined
-    const after = !a.local && a.applied ? ctx.store.fresh(a.target, a.name)?.version : undefined
+    // before/after: local data, and system files like settings.json (git has the file, the audit the values)
+    const change = local.get(id)
+    const after = !a.local && a.applied && !isSystemTarget(a.target) ? ctx.store.fresh(a.target, a.name)?.version : undefined
     events.push({
       ...base,
       category: a.local ? "local" : a.applied ? (special ?? "change") : a.stagedId ? "staged" : "proposed",

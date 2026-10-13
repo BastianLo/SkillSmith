@@ -14,12 +14,16 @@ import { isStoreId, nodeLabel, RELATION_LABEL, type GraphEdge, type GraphNode } 
 import { graphAt, semanticMap, shortestPath } from "../core/graph-extra"
 import { aiAccessOf, isOwnDoc, meaningsOf, MEMORY_TYPE_LABEL, scriptFiles, spec, TIER_LABEL } from "../core/kinds"
 import { M } from "../core/metrics"
-import { inbox, markVisited, projectPage, sessionPage, simulateHints, ticketPage } from "../core/productivity"
+import { inbox, markVisited } from "../core/inbox"
+import { projectPage, sessionPage, simulateHints, ticketPage } from "../core/productivity"
 import { radiusOf, storeExtras } from "../core/relevance"
 import { templates } from "../core/templates"
 import type { Entry, Kind } from "../types"
 import { AI_ACCESS, KINDS, key } from "../types"
 import { sha, tokenize, truncate } from "../util/text"
+import { journalLine, journalTarget, shadowLine, type JournalAction } from "../core/legacy"
+import { ENDPOINTS } from "./endpoints"
+import { readTaskFields } from "../core/task-fields"
 import { entryUsage, statsAgents, statsErrors, statsEvents, statsHints, statsKnowledge, statsOverview, statsPipeline, statsSmiths, statsTasks, statsTools } from "./stats"
 
 export class NotFound extends Error {}
@@ -184,7 +188,7 @@ export class ReadApi {
       case "models":
         return ctx.agentTasks.models()
       case "jobs":
-        return ctx.agentTasks.all().slice(0, int(q.get("limit"), 100, 1, 1000)).map((j) => ({ id: j.id, task: j.task, project: j.project, agent: j.agent, model: j.model, phase: j.phase, startedAt: j.startedAt, endedAt: j.endedAt, cost: j.cost, tokens: j.tokens, permissions: j.permissions.length, prepared: !!j.prepared }))
+        return ctx.agentTasks.all().slice(0, int(q.get("limit"), 100, 1, 1000)).map((j) => ({ id: j.id, task: j.task, project: j.project, agent: j.agent, stepAgent: j.stepAgent, model: j.model, phase: j.phase, step: j.step, column: j.column, waitingFor: j.waitingFor, loops: j.loops, startedAt: j.startedAt, endedAt: j.endedAt, cost: j.cost, tokens: j.tokens, permissions: j.permissions.length, prepared: !!j.prepared }))
       case "job":
         return ctx.agentTasks.tree(q.get("id") ?? "")
       case "job/session":
@@ -201,8 +205,11 @@ export class ReadApi {
       }
       case "exports":
         return this.exports()
-      default:
+      default: {
+        const endpoint = ENDPOINTS[path]
+        if (endpoint) return (await endpoint(ctx, q)) as Json
         throw new NotFound(`unknown endpoint ${path}`)
+      }
     }
   }
 
@@ -273,7 +280,10 @@ export class ReadApi {
       project: this.scope().projectName,
       directory: this.ctx.directory,
       store: this.ctx.store.root,
-      // effective configuration (display only – it is changed in opencode.json); secrets removed
+      // values changed on the settings page that only take effect after a restart of opencode
+      pendingRestart: [...(this.ctx.settings?.pendingRestart ?? [])],
+      jobsAvailable: !!this.ctx.jobs,
+      // effective configuration; secrets removed (the settings page shows sources and edits)
       config: publicConfig(o),
     }
   }
@@ -327,7 +337,8 @@ export class ReadApi {
       readOnly: isReadOnly(ctx),
       myDocs: { total: own.length, proposals: ctx.ops.staged().filter((x) => x.aiProposal).length, recent: own.sort((a, b) => (b.meta?.updatedAt ?? "").localeCompare(a.meta?.updatedAt ?? "")).slice(0, 6).map((e) => ({ id: `knowledge:${e.name}`, title: e.title, updatedAt: e.meta?.updatedAt ?? null })) },
       tasks: { open: ctx.tasks.list({ project: "*" }).filter((t) => !ctx.tasks.isDone(t.status, t.project)).length, agents: ctx.agentTasks.active().length },
-      inbox: inbox(ctx).items.length,
+      inbox: inbox(ctx).badge,
+      jobs: { failed: (ctx.jobs?.list() ?? []).filter((j) => (j.last as { status?: string } | null)?.status === "error").length, running: (ctx.jobs?.list() ?? []).filter((j) => j.running).length },
     }
   }
 
@@ -611,7 +622,7 @@ export class ReadApi {
       .reverse()
       .map((l) => {
         try {
-          const j = JSON.parse(l)
+          const j = journalLine(JSON.parse(l))
           return {
             at: j.at,
             run: j.run,
@@ -623,7 +634,7 @@ export class ReadApi {
             summary: j.summary ?? null,
             session: j.session ?? null,
             project: j.project ?? null,
-            actions: (j.actions ?? []).filter((a: any) => a.applied && a.kind !== "note").slice(0, 30).map((a: any) => ({ kind: a.kind, target: a.target, name: a.name, reason: a.reason ?? null, local: !!a.local, id: a.local ? a.name : `${a.target}:${a.name}` })),
+            actions: (j.actions as JournalAction[]).filter((a) => a.applied && a.kind !== "note").slice(0, 30).map((a) => ({ kind: a.kind, target: a.target, name: a.name, reason: a.reason ?? null, local: !!a.local, id: journalTarget(a) ?? null })),
           }
         } catch {
           return undefined
@@ -642,7 +653,7 @@ export class ReadApi {
     return lines
       .map((l, index) => {
         try {
-          const j = JSON.parse(l)
+          const j = shadowLine(JSON.parse(l))
           return { index, at: j.at, smith: j.smith, action: j.action, target: j.target, name: j.name, reason: j.reason ?? null }
         } catch {
           return undefined
@@ -659,6 +670,7 @@ export class ReadApi {
     return {
       project: p ?? null,
       columns: ctx.tasks.columns(p?.name),
+      flows: ctx.agentTasks.flows(p?.name),
       wip: p?.wip ?? ctx.options.tasks.wipLimits,
       tasks: ctx.tasks.list({ project }),
       loose: ctx.tasks.looseItems(p?.name),
@@ -682,7 +694,9 @@ export class ReadApi {
       })(),
       children,
       parent: v.parent ? ctx.tasks.view(ctx.tasks.require(v.parent)) : null,
-      jobs: ctx.agentTasks.all().filter((j) => j.task === e.name).map((j) => ({ id: j.id, agent: j.agent, model: j.model, phase: j.phase, startedAt: j.startedAt, endedAt: j.endedAt })),
+      fields: readTaskFields(e.fields),
+      flows: ctx.agentTasks.flows(v.project),
+      jobs: ctx.agentTasks.all().filter((j) => j.task === e.name).map((j) => ({ id: j.id, agent: j.agent, stepAgent: j.stepAgent, model: j.model, phase: j.phase, step: j.step, column: j.column, waitingFor: j.waitingFor, loops: j.loops, startedAt: j.startedAt, endedAt: j.endedAt })),
       runs: ctx.pipeline.runs(v.project, 200).filter((r) => r.task === e.name).slice(0, 20),
       entry: this.entry(`task:${e.name}`),
     }

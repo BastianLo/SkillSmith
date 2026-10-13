@@ -11,8 +11,10 @@ import { nowIso, oneLine, truncate } from "../util/text"
 import type { Ctx } from "./context"
 import { str, strArray } from "./frontmatter"
 import { taskId, taskName, TASK_PRIORITIES } from "./kinds"
+import { finalizeRun } from "./finalize"
 import { M } from "./metrics"
 import { GuardError } from "./ops"
+import { LEGACY_STATUS } from "./workflow"
 
 export interface ChecklistItem {
   line: number
@@ -441,6 +443,29 @@ export class Tasks {
     }
     throw new GuardError("unbekannte Quelle")
   }
+}
+
+/**
+ * Boards of 3.x had the columns eingeplant / in_umsetzung; 4.x plans in „planung“ and
+ * implements in „umsetzung“. Tasks whose status is no column of their board any more move
+ * to the column that does the same work – once, in one run (commit).
+ */
+export async function migrateTaskColumns(ctx: Ctx): Promise<number> {
+  const moves: Array<{ e: Entry; to: string; from: string }> = []
+  for (const e of ctx.store.list("task")) {
+    const project = str(e.fields.project) || undefined
+    const cols = ctx.tasks.columns(project)
+    const status = str(e.fields.status)
+    if (!status || cols.includes(status)) continue
+    const to = LEGACY_STATUS[status]
+    if (to && cols.includes(to)) moves.push({ e, to, from: status })
+  }
+  if (!moves.length) return 0
+  const run = ctx.runs.create({ smith: "memorysmith", actor: "command", trigger: "migrate task columns", writeMode: "auto", directory: ctx.directory, project: ctx.project, limits: { maxNew: 0, maxChanges: 100_000, maxNotes: 0 } })
+  run.subject = `memorysmith(command): migrate ${moves.length} task column(s)`
+  for (const m of moves) await ctx.ops.update(run, "task", { name: m.e.name, fields: { ...m.e.fields, status: m.to }, reason: `Spalte ${m.from} → ${m.to} (Board 4.0)`, approved: true })
+  await finalizeRun(ctx, run, { ok: true })
+  return moves.length
 }
 
 /** Needs an explicit confirmation by the user (WIP limit, open subtasks, red pipeline). */

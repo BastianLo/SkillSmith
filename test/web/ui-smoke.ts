@@ -53,6 +53,15 @@ const routes: Array<[string, string, string?]> = [
   ["37-verlauf", "#/verlauf"],
   ["38-erinnerung", "#/eintrag/memory%3Ashop-entscheidung-token-speicherung"],
   ["39-arbeitsstaende", "#/liste/arbeitsstand"],
+  ["41-einstellungen-sitzung", "#/einstellungen?tab=sitzung"],
+  ["42-einstellungen-suche", "#/einstellungen?q=token"],
+  ["43-log", "#/logs?stufe=debug"],
+  ["44-log-gruppiert", "#/logs?gruppe=lauf&stufe=debug"],
+  ["45-jobs", "#/jobs?job=prune"],
+  ["46-eingang-einstellen", "#/eingang?einstellen=1"],
+  ["47-aufgabe-kriterien-tests", "#/aufgabe/t-1?tab=tests"],
+  ["48-agenten-liste", "#/liste/agent"],
+  ["49-neuer-agent", "#/neu/agent"],
 ]
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium" })

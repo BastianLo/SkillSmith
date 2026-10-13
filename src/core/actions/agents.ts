@@ -3,6 +3,7 @@ import { str } from "../frontmatter"
 import { GuardError } from "../ops"
 import type { ActionDef } from "./types"
 import { defineAction } from "./types"
+import { importAgents } from "../agent-defs"
 import { requireEntry } from "./util"
 
 const job = { t: "string", max: 60 } as const
@@ -49,14 +50,33 @@ export const AGENT_ACTIONS: ActionDef[] = [
   }),
   defineAction({
     name: "agent.approve",
-    label: "Vorschlag freigeben",
+    label: "Plan freigeben",
     area: "agent",
     smith: "memorysmith",
     strongToken: "tasks",
-    args: { job, comments: { t: "string", multiline: true, max: 20_000, optional: true }, answers: { t: "string", multiline: true, max: 20_000, optional: true } },
+    args: {
+      job,
+      comments: { t: "string", multiline: true, max: 20_000, optional: true },
+      answers: { t: "string", multiline: true, max: 20_000, optional: true },
+      // criteria and test cases as edited in the approval dialog (gate 1)
+      criteria: { t: "array", max: 40, optional: true },
+      testcases: { t: "array", max: 40, optional: true },
+    },
     async run({ ctx }, run, a) {
-      const j = await ctx.agentTasks.approve(run, a.job, { comments: a.comments, answers: a.answers })
-      return { message: "freigegeben – der Agent setzt jetzt um", target: `task:${j.task}` }
+      const j = await ctx.agentTasks.approve(run, a.job, { comments: a.comments, answers: a.answers, criteria: a.criteria, testcases: a.testcases })
+      return { message: "Plan freigegeben – der nächste Schritt läuft", target: `task:${j.task}` }
+    },
+  }),
+  defineAction({
+    name: "agent.continue",
+    label: "Weiter im Workflow",
+    area: "agent",
+    smith: "memorysmith",
+    strongToken: "tasks",
+    args: { job, text: { t: "string", multiline: true, max: 20_000, optional: true }, to: { t: "string", max: 40, optional: true } },
+    async run({ ctx }, run, a) {
+      const j = await ctx.agentTasks.continue(run, a.job, { text: a.text, to: a.to })
+      return { message: `weiter – ${j.column ?? ""}`, target: `task:${j.task}` }
     },
   }),
   defineAction({
@@ -163,6 +183,17 @@ export const AGENT_ACTIONS: ActionDef[] = [
       const r = await ctx.agentTasks.accept(run, a.job, a.mode)
       const j = ctx.agentTasks.get(a.job)
       return { message: r.message, target: j ? `task:${j.task}` : undefined, data: r }
+    },
+  }),
+  defineAction({
+    name: "agent.import",
+    label: "Agenten aus opencode übernehmen",
+    area: "agent",
+    smith: "skillsmith",
+    args: { names: { t: "list", max: 50, item: 80, optional: true } },
+    async run({ ctx }, run, a) {
+      const r = await importAgents(ctx, run, a.names)
+      return { message: r.length ? `${r.length} Agent(en) übernommen: ${r.join(", ")} – wirkt nach einem Neustart von opencode` : "keine neuen Agenten", data: { imported: r } }
     },
   }),
   defineAction({

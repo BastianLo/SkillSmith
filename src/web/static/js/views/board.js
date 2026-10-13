@@ -13,8 +13,18 @@ export function pipelineBadge(pl) {
 
 export function agentChip(a) {
   if (!a) return null
-  const cls = a.status === "permission" || a.status === "awaiting_approval" ? "warn" : a.status === "error" ? "danger" : a.status === "in_test" || a.status === "accepted" ? "ok" : "accent"
+  const cls = a.status === "permission" || a.status === "waiting" ? "warn" : a.status === "error" || a.status === "halted" ? "danger" : a.status === "accepted" ? "ok" : a.status === "discarded" || a.status === "aborted" ? "" : "accent"
   return h("a", { class: `chip ${cls}`, href: a.job ? `#/agenten/${encodeURIComponent(a.job)}` : "#/agenten", title: "Agenten-Auftrag" }, icon("agent", 11), a.label)
+}
+
+const STEP_SHORT = { plan: "Planung", implement: "Umsetzung", test: "Test", verify: "Verifikation" }
+
+/** Small line under a column title: which agent does what here, and the gate. */
+export function flowHint(f) {
+  if (!f || !f.step) return null
+  const parts = [`${STEP_SHORT[f.step] || f.step}${f.agent ? ` · ${f.agent}` : ""}`]
+  if (f.gate) parts.push("Freigabe")
+  return h("div", { class: "col-flow", title: `Schritt ${STEP_SHORT[f.step] || f.step}${f.agent ? ` mit Agent ${f.agent}` : " mit dem Agenten der Aufgabe"}${f.checks?.length ? ` · Prüfungen: ${f.checks.join(", ")}` : ""}${f.gate ? " · wartet danach auf Ihre Freigabe" : ""}` }, icon("agent", 11), parts.join(" · "))
 }
 
 function dueClass(due) {
@@ -159,6 +169,7 @@ export default async function board(ctx) {
           "section",
           { class: "col", "data-col": col, "aria-label": colLabel(col) },
           h("div", { class: "col-head" }, h("span", { class: "grow", text: colLabel(col) }), h("span", { class: `count${limit && inCol.length > limit ? " over" : ""}`, title: limit ? `WIP-Limit ${limit}` : "", text: limit ? `${inCol.length}/${limit}` : String(inCol.length) })),
+          flowHint(data.flows?.[col]),
           ci === 0 && !app.readOnly ? h("div", { class: "col-add", style: { paddingTop: "8px" } }, newTaskInput()) : null,
           bodyEl,
         )

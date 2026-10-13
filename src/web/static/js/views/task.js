@@ -2,7 +2,9 @@ import { download, get, upload } from "../api.js"
 import { createEditor } from "../cm.js"
 import { AI_ACCESS, PRIORITIES, colLabel, debounce, entryHref, fmtDate, fmtDur, graphHref, h, icon, put, swap } from "../dom.js"
 import { auditTab, linksBlock, mdBlock, relationsBlock, versionsTab } from "../parts.js"
-import { act, app, confirmDialog, fill, modal, moreButton, promptDialog, tabBar, toast, toastError } from "../ui.js"
+import { act, app, card, confirmDialog, fill, modal, moreButton, promptDialog, tabBar, toast, toastError } from "../ui.js"
+import { criteriaEditor, criteriaView, fieldsSummary, planView, testcaseEditor, testcasesView, verificationView } from "../fields.js"
+import { jobChip } from "./agents.js"
 import { agentChip, pipelineBadge } from "./board.js"
 
 /** Dialog "An Agent übergeben": agent, model, workplace, extra instructions, brief preview. */
@@ -94,7 +96,7 @@ export default async function task(ctx) {
     const target = `task:${t.name}`
     const projects = await get("projects").catch(() => [])
     const project = projects.find((p) => p.name === t.project)
-    const columns = project?.columns?.length ? project.columns : app.info?.columns || ["neu", "eingeplant", "in_umsetzung", "test", "erledigt"]
+    const columns = project?.columns?.length ? project.columns : app.info?.columns || ["neu", "planung", "umsetzung", "test", "verifikation", "erledigt"]
     ed?.destroy()
     ed = null
     // ---------------------------------------------------------------- header
@@ -237,7 +239,7 @@ export default async function task(ctx) {
           "div",
           { class: "card" },
           h("h3", { text: "Agenten-Aufträge" }),
-          h("div", { class: "list" }, data.jobs.map((j) => h("a", { class: "row", href: `#/agenten/${encodeURIComponent(j.id)}` }, icon("agent", 15), h("div", { class: "main" }, h("div", { class: "title", text: `${j.agent}${j.model ? ` · ${j.model}` : ""}` }), h("div", { class: "desc", text: fmtDate(j.startedAt) })), h("div", { class: "meta" }, h("span", { class: "chip", text: j.phase }))))),
+          h("div", { class: "list" }, data.jobs.map((j) => h("a", { class: "row", href: `#/agenten/${encodeURIComponent(j.id)}` }, icon("agent", 15), h("div", { class: "main" }, h("div", { class: "title", text: `${j.stepAgent && j.stepAgent !== j.agent ? `${j.agent} → ${j.stepAgent}` : j.agent}${j.model ? ` · ${j.model}` : ""}` }), h("div", { class: "desc", text: `${fmtDate(j.startedAt)}${j.column ? ` · Spalte ${colLabel(j.column)}` : ""}${j.loops ? ` · ${j.loops} Rücksprung/Rücksprünge` : ""}` })), h("div", { class: "meta" }, jobChip({ ...j, permissions: 0 }))))),
         )
       : null
     const runsCard = data.runs.length
@@ -263,35 +265,90 @@ export default async function task(ctx) {
       fieldRow("Elternaufgabe", textField(t.parent || "", (v) => update({ parent: v.toUpperCase() }))),
       h("div", { class: "faint", style: { fontSize: "12px", marginTop: "8px" }, text: `${data.entry.own ? "von Ihnen" : "von der KI"} · KI-Recht ${AI_ACCESS[data.entry.ai]?.label ?? data.entry.ai} · erstellt ${fmtDate(t.createdAt)} · geändert ${fmtDate(t.updatedAt)}` }),
     )
+    const summary = fieldsSummary(data.fields)
+    const acceptCard = h(
+      "div",
+      { class: "card" },
+      h("div", { class: "card-head" }, h("h3", { class: "grow", text: "Abnahme" }), h("a", { class: "btn sm ghost", href: "#", onclick: (e) => (e.preventDefault(), selectTab("tests")), text: "Kriterien & Tests →" })),
+      summary || h("div", { class: "faint", style: { fontSize: "13px" }, text: "Noch keine Kriterien oder Testfälle – der Planer schlägt sie vor, oder Sie legen sie an." }),
+    )
     // ---------------------------------------------------------------- tabs
+    const TABS = [
+      ["", "Übersicht"],
+      ["tests", "Kriterien & Tests"],
+      ["verknuepfungen", "Verknüpfungen"],
+      ["versionen", "Versionen"],
+      ["audit", "Aktivität"],
+    ]
     const tabBody = h("div")
+    const selectTab = (k) => {
+      tab = k
+      ctx.setQuery({ tab: k || undefined })
+      drawTab()
+    }
     const tabs = tabBar(
-      [
-        ["", "Übersicht"],
-        ["verknuepfungen", "Verknüpfungen"],
-        ["versionen", "Versionen"],
-        ["audit", "Aktivität"],
-      ],
+      TABS,
       tab,
-      (k) => {
-        tab = k
-        ctx.setQuery({ tab: k })
-        drawTab()
-      },
+      selectTab,
     )
     const drawTab = () => {
       tabs.querySelectorAll("button").forEach((b, i) => {
-        const on = ["", "verknuepfungen", "versionen", "audit"][i] === tab
+        const on = TABS[i][0] === tab
         b.classList.toggle("on", on)
         b.setAttribute("aria-selected", on ? "true" : "false")
       })
-      if (tab === "") swap(tabBody, h("div", { class: "cols" }, h("div", { class: "stack" }, descCard, subCard, attCard, jobsCard, runsCard), h("div", { class: "stack" }, fieldsCard, data.entry.backlinks?.length ? linksBlock({ ...data.entry, links: [], mentions: [] }) : null)))
+      if (tab === "") swap(tabBody, h("div", { class: "cols" }, h("div", { class: "stack" }, descCard, subCard, attCard, jobsCard, runsCard), h("div", { class: "stack" }, fieldsCard, acceptCard, data.entry.backlinks?.length ? linksBlock({ ...data.entry, links: [], mentions: [] }) : null)))
+      else if (tab === "tests") swap(tabBody, testsTab(t, project))
       else if (tab === "verknuepfungen") swap(tabBody, h("div", { class: "grid two" }, relationsBlock(data.entry, { onChange: load }), linksBlock(data.entry, { onChange: load })))
       else if (tab === "versionen") fill(tabBody, () => versionsTab(target, { onRestored: load }))
       else fill(tabBody, () => auditTab(target))
     }
     swap(page, head, tabs, tabBody)
     drawTab()
+  }
+
+  // ---------------------------------------------------------------- criteria, test cases, plan, verification
+  function testsTab(t, project) {
+    const f = data.fields || {}
+    const target = `task:${t.name}`
+    const saveFields = async (patch) => {
+      const r = await act("task.fields", { target, ...patch }, { base: data.entry.version, onReload: load })
+      if (r) await load()
+      return r
+    }
+    const editable = (title, view, editorOf, key) => {
+      const body = h("div", null, view)
+      const btn = app.readOnly
+        ? null
+        : h("button", {
+            class: "btn sm",
+            type: "button",
+            text: "Bearbeiten",
+            onclick: () => {
+              const ed = editorOf()
+              btn.classList.add("hidden")
+              swap(body, ed.el, h("div", { class: "toolbar" }, h("button", { class: "btn sm primary", type: "button", text: "Speichern", onclick: () => saveFields({ [key]: ed.value() }) }), h("button", { class: "btn sm", type: "button", text: "Abbrechen", onclick: () => (btn.classList.remove("hidden"), swap(body, view)) })))
+            },
+          })
+      return h("div", { class: "card" }, h("div", { class: "card-head" }, h("h3", { class: "grow", text: title }), btn), body)
+    }
+    const onResult = app.readOnly
+      ? undefined
+      : async (id, result) => {
+          const protocol = result === "fehlgeschlagen" ? await promptDialog(`${id} fehlgeschlagen`, { label: "Was ist passiert? (geht an den Agenten)", multiline: true, required: false }) : ""
+          if (protocol === null || protocol === undefined) return
+          ;(await act("task.testResult", { target, case: id, result, protocol: protocol || undefined })) && load()
+        }
+    const commands = (f.testcases || []).filter((x) => x.mode === "befehl" && x.command)
+    const testsCard = editable("Testfälle", testcasesView(f.testcases, { onResult, project: t.project }), () => testcaseEditor(f.testcases), "testcases")
+    if (commands.length && t.project && !app.readOnly)
+      testsCard.querySelector(".card-head").append(h("button", { class: "btn sm", type: "button", title: "Alle Testfälle mit Befehl als Pipeline-Lauf im Arbeitsverzeichnis der Aufgabe ausführen", onclick: async () => (await act("task.runTests", { target })) && setTimeout(load, 1500) }, icon("play", 12), `Befehle ausführen (${commands.length})`))
+    return h(
+      "div",
+      { class: "cols" },
+      h("div", { class: "stack" }, editable("Akzeptanzkriterien", criteriaView(f.criteria), () => criteriaEditor(f.criteria), "criteria"), testsCard),
+      h("div", { class: "stack" }, card("Freigegebener Plan", planView(f.plan)), card("Verifikation", verificationView(f.verification, f.criteria))),
+    )
   }
 
   function fieldRow(label, control, extra) {

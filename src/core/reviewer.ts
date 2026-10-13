@@ -8,7 +8,7 @@ import { join } from "node:path"
 import { parseModel } from "../config"
 import { refOf, specOf } from "./models"
 import type { Candidate, Entry, ErrorChain, Kind, ReviewJob, Run, SearchHit, Smith } from "../types"
-import { CONTENT_KINDS } from "../types"
+import { CONTENT_KINDS, isSystemTarget } from "../types"
 import { ensureDir, isLocked, sleep } from "../util/fs"
 import { errorMessage, nowIso, oneLine, tokenize, truncate } from "../util/text"
 import { agentSemaphore, runAgentSession, unwrap, type ModelRef } from "./agent-runner"
@@ -497,7 +497,7 @@ async function runSmith(ctx: Ctx, smith: Smith, input: SmithInput): Promise<Smit
     outdatedDocs: run.outdatedDocs,
     links: run.actions
       .filter((a) => a.applied && LINK_ACTIONS.has(a.kind))
-      .map((a) => ({ kind: a.target, name: a.name, rel: a.kind === "create" ? ("new" as const) : ("changed" as const) })),
+      .flatMap((a) => (isSystemTarget(a.target) ? [] : [{ kind: a.target, name: a.name, rel: a.kind === "create" ? ("new" as const) : ("changed" as const) }])),
   }
 }
 

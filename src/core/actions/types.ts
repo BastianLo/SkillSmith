@@ -14,6 +14,7 @@ export type ArgRule =
   | { t: "enum"; values: readonly string[]; optional?: boolean }
   | { t: "list"; max?: number; item?: number; optional?: boolean }
   | { t: "object"; optional?: boolean }
+  | { t: "array"; max?: number; optional?: boolean }
   | { t: "id"; optional?: boolean }
   | { t: "hash"; optional?: boolean }
 
@@ -49,6 +50,8 @@ export interface ActionOutput {
   /** link to open afterwards (#/…) */
   open?: string
   warnings?: string[]
+  /** follow-up after the run is finalized (its commit is done, its claims are released) */
+  after?: () => Promise<string | undefined>
 }
 
 export interface ActionPreview {
@@ -60,6 +63,8 @@ export interface ActionPreview {
   confirmName?: string
 }
 
+export type StrongToken = "tasks" | "pipeline" | "always"
+
 export interface ActionDef<A = any> {
   name: string
   label: string
@@ -68,8 +73,8 @@ export interface ActionDef<A = any> {
   args: ArgSchema
   /** confirmation from web.confirm */
   confirm?: "delete" | "undo" | "restore" | "merge" | "rename"
-  /** needs the token even when web.token is off (tasks.requireToken / pipeline.requireToken) */
-  strongToken?: "tasks" | "pipeline" | ((env: ActionEnv, args: A) => "tasks" | "pipeline" | undefined)
+  /** needs the token even when web.token is off (tasks.requireToken / pipeline.requireToken; "always" = security settings) */
+  strongToken?: StrongToken | ((env: ActionEnv, args: A) => StrongToken | undefined)
   /** local data only (no commit expected) */
   local?: boolean
   /** allowed in read-only mode (starts nothing that writes, e.g. a simulation) */

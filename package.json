@@ -1,6 +1,6 @@
 {
   "name": "skillsmith",
-  "version": "3.0.1",
+  "version": "4.0.0-beta.1",
   "private": true,
   "type": "module",
   "description": "Self-maintaining knowledge for opencode: skills (skillsmith), knowledge base + glossary (docsmith), errors with fixes (errorsmith), tested Python scripts (toolsmith), project memories (memorysmith), relations and conflicts (doctor); a local web workplace (knowledge base with editor and [[links]], tasks and kanban board, projects with pipeline, agent tasks with proposal/approval in git worktrees, audit log, metrics and statistics) – background reviewers, curator, hybrid search, git-tracked changes.",

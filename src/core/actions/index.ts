@@ -21,11 +21,12 @@ import { ENTRY_ACTIONS } from "./entries"
 import { MEMORY_ACTIONS } from "./memory"
 import { SYSTEM_ACTIONS } from "./system"
 import { TASK_ACTIONS } from "./tasks"
-import type { ActionDef, ActionEnv, ArgRule, ArgSchema } from "./types"
+import { OPERATION_ACTIONS } from "./operations"
+import type { ActionDef, ActionEnv, ArgRule, ArgSchema, StrongToken } from "./types"
 
 export * from "./types"
 
-export const ACTIONS: ActionDef[] = [...ENTRY_ACTIONS, ...DOC_ACTIONS, ...TASK_ACTIONS, ...AGENT_ACTIONS, ...MEMORY_ACTIONS, ...SYSTEM_ACTIONS]
+export const ACTIONS: ActionDef[] = [...ENTRY_ACTIONS, ...DOC_ACTIONS, ...TASK_ACTIONS, ...AGENT_ACTIONS, ...MEMORY_ACTIONS, ...SYSTEM_ACTIONS, ...OPERATION_ACTIONS]
 const BY_NAME = new Map(ACTIONS.map((a) => [a.name, a]))
 
 export function actionDef(name: string): ActionDef | undefined {
@@ -36,7 +37,7 @@ export function actionDef(name: string): ActionDef | undefined {
 export function needsStrongToken(ctx: Ctx, req: ActionRequest): boolean {
   const def = BY_NAME.get(req.action)
   if (!def?.strongToken) return false
-  let kind: "tasks" | "pipeline" | undefined
+  let kind: StrongToken | undefined
   if (typeof def.strongToken === "function") {
     try {
       kind = def.strongToken({ ctx, actor: "web" }, parseArgs(def.args, { ...((req.args as Record<string, unknown>) ?? {}), ...(req.target !== undefined && "target" in def.args ? { target: req.target } : {}) }))
@@ -45,6 +46,7 @@ export function needsStrongToken(ctx: Ctx, req: ActionRequest): boolean {
     }
   } else kind = def.strongToken
   if (!kind) return false
+  if (kind === "always") return true
   return kind === "tasks" ? ctx.options.tasks.requireToken : ctx.options.pipeline.requireToken
 }
 
@@ -99,6 +101,10 @@ function check(name: string, rule: ArgRule, v: unknown): unknown {
     }
     case "object":
       if (!v || typeof v !== "object" || Array.isArray(v)) throw new ActionError(400, `„${name}“ muss ein Objekt sein`)
+      return v
+    case "array":
+      if (!Array.isArray(v) || v.some((x) => x === null || (typeof x !== "object" && typeof x !== "string"))) throw new ActionError(400, `„${name}“ muss eine Liste sein`)
+      if (rule.max !== undefined && v.length > rule.max) throw new ActionError(400, `„${name}“: höchstens ${rule.max} Einträge`)
       return v
     case "id":
       if (typeof v !== "string" || !ID_RE.test(v)) throw new ActionError(400, `„${name}“ muss eine Id wie kind:name sein`)
@@ -199,6 +205,14 @@ export async function executeAction(env: ActionEnv, req: ActionRequest, payload?
   }
   const fin = await finalizeRun(ctx, run, { ok: !error, error: error ? errorMessage(error) : undefined })
   if (error) throw toActionError(error)
+  if (out?.after) {
+    try {
+      const note = await out.after()
+      if (note) out.warnings = [...(out.warnings ?? []), note]
+    } catch (err) {
+      out.warnings = [...(out.warnings ?? []), errorMessage(err)]
+    }
+  }
   const audit = ctx.audit?.query({ run: run.id, limit: 1 }).events[0]?.seq
   const target = out?.target
   return {
@@ -275,7 +289,7 @@ export function catalog(ctx: Ctx): Array<Record<string, unknown>> {
     label: a.label,
     area: a.area,
     confirm: a.confirm ? ctx.options.web.confirm[a.confirm] : "none",
-    strongToken: typeof a.strongToken === "function" ? "depends" : a.strongToken ? (a.strongToken === "tasks" ? ctx.options.tasks.requireToken : ctx.options.pipeline.requireToken) : false,
+    strongToken: typeof a.strongToken === "function" ? "depends" : a.strongToken ? (a.strongToken === "always" ? true : a.strongToken === "tasks" ? ctx.options.tasks.requireToken : ctx.options.pipeline.requireToken) : false,
     local: !!a.local,
     args: Object.fromEntries(Object.entries(a.args).map(([k, r]) => [k, { type: r.t, optional: !!(r as { optional?: boolean }).optional, ...("values" in r ? { values: r.values } : {}) }])),
   }))

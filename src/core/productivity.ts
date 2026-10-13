@@ -1,18 +1,15 @@
 /**
  * Productivity features of the knowledge workplace (step 4d): daily note with standup
- * draft, quick note, the inbox "Zu prüfen", the hint simulator, ticket, session and
- * project pages. Everything here reads; writes go through actions.
+ * draft, quick note, the hint simulator, ticket, session and project pages (the inbox lives
+ * in inbox.ts). Everything here reads; writes go through actions.
  */
-import { join } from "node:path"
-import type { Entry } from "../types"
-import { readJson, readText, writeJsonAtomic } from "../util/fs"
-import { daysBetween, fold, nowIso, truncate } from "../util/text"
+import { fold, localDay, truncate } from "../util/text"
 import type { Ctx } from "./context"
 import { str } from "./frontmatter"
 import { gitIn } from "./git"
 import { formatHint, HintEngine } from "./hints"
-import { aiAccessOf, isOwnDoc, MEMORY_TYPE_LABEL, spec } from "./kinds"
-import { localDay } from "./sqlite"
+import { MEMORY_TYPE_LABEL } from "./kinds"
+import { resolveFlows } from "./workflow"
 
 const DAY = 86_400_000
 
@@ -77,199 +74,6 @@ export async function journalBody(ctx: Ctx, date: string): Promise<string> {
 export function standupOf(body: string): string {
   const m = /## Standup-Entwurf\s*\n([\s\S]*?)(?=\n## |$)/.exec(body)
   return (m?.[1] ?? "").replace(/\[\[[^\]|]+\|([^\]]+)\]\]/g, "$1").replace(/\[\[(?:task:)?([^\]]+)\]\]/g, "$1").trim()
-}
-
-// ---------------------------------------------------------------------------
-// inbox "Zu prüfen"
-// ---------------------------------------------------------------------------
-
-export interface InboxItem {
-  id: string
-  type: string
-  group: string
-  title: string
-  detail?: string
-  target?: string
-  at?: string
-  severity: "info" | "warn" | "critical"
-  /** suggested actions (names from the catalog) */
-  actions: Array<{ action: string; label: string; args?: Record<string, unknown>; target?: string; confirm?: boolean }>
-  data?: unknown
-}
-
-function visitFile(ctx: Ctx): string {
-  return join(ctx.store.stateDir, "web-visit.json")
-}
-
-export function lastVisit(ctx: Ctx): string | undefined {
-  return readJson<{ inbox?: string }>(visitFile(ctx), {}).inbox
-}
-
-export function markVisited(ctx: Ctx): void {
-  writeJsonAtomic(visitFile(ctx), { ...readJson<Record<string, string>>(visitFile(ctx), {}), inbox: nowIso() })
-}
-
-export function inbox(ctx: Ctx, opts: { since?: string } = {}): { since?: string; items: InboxItem[]; counts: Record<string, number> } {
-  const items: InboxItem[] = []
-  const since = opts.since ?? lastVisit(ctx) ?? new Date(Date.now() - 7 * DAY).toISOString()
-  const label = (id: string) => {
-    const i = id.indexOf(":")
-    const e = i > 0 ? ctx.store.getOwned(id.slice(0, i) as Entry["kind"], id.slice(i + 1)) : undefined
-    return e?.title ?? id
-  }
-  // changes of the agents since the last visit (with diff, feedback)
-  for (const ev of ctx.audit?.query({ from: since, category: ["change"], actor: ["reviewer", "curator", "doctor", "agent"], limit: 200 }).events ?? []) {
-    const t = ev.targets[0]
-    if (!t) continue
-    items.push({
-      id: `change-${ev.seq}`,
-      type: "change",
-      group: "Änderungen der KI",
-      title: `${ev.smith ?? ev.actor}: ${ev.action} ${label(t)}`,
-      detail: ev.reason,
-      target: t,
-      at: ev.at,
-      severity: "info",
-      actions: [
-        { action: "feedback", label: "👍", args: { seq: ev.seq, good: true } },
-        { action: "feedback", label: "👎", args: { seq: ev.seq, good: false } },
-        ...(ev.run ? [{ action: "run.undo", label: "Rückgängig", args: { run: ev.run }, confirm: true }] : []),
-      ],
-      data: { commit: ev.commit, run: ev.run, seq: ev.seq },
-    })
-  }
-  // proposals and staged changes
-  for (const s of ctx.ops.staged()) {
-    items.push({
-      id: `staged-${s.id}`,
-      type: s.aiProposal ? "proposal" : "staged",
-      group: s.aiProposal ? "Vorschläge für Ihre Dokumente" : "Zur Freigabe vorgemerkt",
-      title: `${s.smith}: ${s.action} ${spec(s.target).label} ${label(`${s.target}:${s.name}`)}`,
-      detail: s.reason,
-      target: `${s.target}:${s.name}`,
-      at: s.createdAt,
-      severity: s.aiProposal ? "warn" : "info",
-      actions: [
-        { action: "proposal.accept", label: "Übernehmen", args: { id: s.id } },
-        { action: "proposal.reject", label: "Ablehnen", args: { id: s.id } },
-      ],
-      data: { staged: s.id, session: s.sessionID },
-    })
-  }
-  // doctor
-  for (const c of ctx.mem?.conflicts(["needs_user", "open"]) ?? []) {
-    items.push({
-      id: `conflict-${c.id}`,
-      type: "conflict",
-      group: "Konflikte",
-      title: `${label(c.a)} ↔ ${label(c.b)}`,
-      detail: c.note ?? c.suspicion,
-      target: c.a,
-      at: new Date(c.detectedAt).toISOString(),
-      severity: c.status === "needs_user" ? "critical" : "warn",
-      actions: [
-        { action: "conflict.resolve", label: "A gilt", args: { id: c.id, choice: "a" } },
-        { action: "conflict.resolve", label: "B gilt", args: { id: c.id, choice: "b" } },
-        { action: "conflict.resolve", label: "beide", args: { id: c.id, choice: "both" } },
-        { action: "conflict.resolve", label: "kein Bezug", args: { id: c.id, choice: "unrelated" } },
-      ],
-      data: { a: c.a, b: c.b, conflict: c.id, status: c.status },
-    })
-  }
-  // memories: unconfirmed decisions, due reviews
-  const today = new Date().toISOString().slice(0, 10)
-  for (const e of ctx.store.list("memory")) {
-    if (e.tier !== "active") continue
-    const id = `memory:${e.name}`
-    if (str(e.fields.type) === "entscheidung" && str(e.fields.status) === "vorgeschlagen") {
-      items.push({ id: `confirm-${e.name}`, type: "decision", group: "Unbestätigte Entscheidungen", title: e.title, detail: e.description, target: id, at: e.meta?.createdAt, severity: "warn", actions: [{ action: "memory.confirm", label: "Bestätigen", target: id }, { action: "entry.archive", label: "Verwerfen", target: id }] })
-    }
-    const ra = str(e.fields.review_after)
-    if (ra && ra <= today) items.push({ id: `review-${e.name}`, type: "review", group: "Fällige Prüfungen", title: e.title, detail: `prüfen seit ${ra}`, target: id, severity: "info", actions: [{ action: "memory.reviewed", label: "Geprüft", target: id }] })
-  }
-  for (const e of ctx.store.list("knowledge")) {
-    if (e.tier !== "active") continue
-    const id = `knowledge:${e.name}`
-    const ra = str(e.fields.review_after)
-    const due = ra ? ra <= today : !isOwnDoc(e) && daysBetween(e.meta?.verifiedAt ?? e.meta?.updatedAt ?? e.meta?.createdAt) >= ctx.options.docsmith.reviewAfterDays
-    if (due || e.meta?.doubts?.length) {
-      items.push({
-        id: `doc-${e.name}`,
-        type: "doc-due",
-        group: "Fällige Prüfungen",
-        title: e.title,
-        detail: e.meta?.doubts?.length ? `möglicherweise veraltet: ${e.meta.doubts[e.meta.doubts.length - 1].note}` : ra ? `prüfen seit ${ra}` : "lange nicht bestätigt",
-        target: id,
-        severity: e.meta?.doubts?.length ? "warn" : "info",
-        actions: [{ action: "doc.check", label: "Jetzt prüfen lassen", target: id }, { action: "doc.verified", label: "Ist aktuell", target: id }],
-      })
-    }
-  }
-  // error-prone entries, red script tests
-  const usage = ctx.usage.all()
-  for (const [id, u] of Object.entries(usage)) {
-    if (u.reviewedLoads >= ctx.options.needsReviewMinLoads && u.loadsWithIssues / u.reviewedLoads >= ctx.options.needsReviewRate) {
-      items.push({ id: `prone-${id}`, type: "error-prone", group: "Fehleranfällig", title: label(id), detail: `Probleme bei ${u.loadsWithIssues} von ${u.reviewedLoads} Einsätzen${u.lastIssue ? ` – zuletzt: ${truncate(u.lastIssue, 160)}` : ""}`, target: id, severity: "warn", actions: [] })
-    }
-  }
-  for (const s of ctx.store.list("script")) {
-    if (s.meta?.test?.status === "failed") items.push({ id: `test-${s.name}`, type: "test", group: "Rote Skript-Tests", title: s.name, detail: s.meta.test.summary, target: `script:${s.name}`, severity: "warn", actions: [{ action: "script.retest", label: "Neu testen", target: `script:${s.name}` }] })
-  }
-  // open abbreviations
-  for (const c of ctx.store.candidates("glossary").filter((x) => !x.promotedTo).slice(0, 30)) {
-    items.push({ id: `abbr-${c.id}`, type: "abbreviation", group: "Offene Abkürzungen", title: c.keywords[0] ?? c.id, detail: `${c.sessions.length} Session(s) · ${truncate(c.summary.replace(/^[^:]+:\s*/, ""), 120)}`, severity: "info", actions: [{ action: "glossary.ignore", label: "Ignorieren", args: { terms: [c.keywords[0] ?? c.id] } }], data: { term: c.keywords[0] ?? c.id } })
-  }
-  // broken links
-  for (const b of ctx.links.broken().slice(0, 50)) {
-    items.push({ id: `link-${b.from}-${b.target}`, type: "broken-link", group: "Defekte Links", title: `${label(b.from)}: ${b.raw}`, detail: `Ziel „${b.target}“ gibt es nicht`, target: b.from, severity: "info", actions: [] })
-  }
-  // agents
-  for (const j of ctx.agentTasks.active()) {
-    if (j.phase === "awaiting_approval") items.push({ id: `agent-${j.id}`, type: "agent-proposal", group: "Agenten", title: `Vorschlag von ${j.agent} für ${j.task.toUpperCase()}`, detail: truncate(j.proposals[j.proposals.length - 1]?.approach ?? "", 200), target: `task:${j.task}`, severity: "warn", actions: [], data: { job: j.id } })
-    for (const p of j.permissions) items.push({ id: `perm-${p.id}`, type: "permission", group: "Agenten", title: `Rückfrage: ${p.title}`, detail: `${j.agent} · ${j.task.toUpperCase()}`, target: `task:${j.task}`, severity: "critical", actions: ["once", "always", "reject"].map((r) => ({ action: "agent.permission", label: r === "once" ? "einmal" : r === "always" ? "immer" : "ablehnen", args: { job: j.id, permission: p.id, response: r } })), data: { job: j.id } })
-    if (j.phase === "in_test") items.push({ id: `agent-done-${j.id}`, type: "agent-done", group: "Agenten", title: `${j.task.toUpperCase()} umgesetzt – bitte prüfen`, detail: truncate(j.summary ?? "", 200), target: `task:${j.task}`, severity: "info", actions: [], data: { job: j.id } })
-  }
-  for (const r of ctx.agentTasks.rules().filter((x) => x.status === "candidate")) {
-    items.push({ id: `rule-${r.id}`, type: "rule", group: "Regeln aus Korrekturen", title: r.text, detail: `${r.kind === "skill" ? "Skill-Änderung" : "Vorgabe"}${r.project ? ` · ${r.project}` : ""}${r.task ? ` · ${r.task.toUpperCase()}` : ""}`, severity: "info", actions: [{ action: "rule.decide", label: "Bestätigen", args: { id: r.id, decision: "confirm" } }, { action: "rule.decide", label: "Verwerfen", args: { id: r.id, decision: "dismiss" } }] })
-  }
-  for (const t of ctx.tasks.list({ project: "*" }).filter((x) => x.suggested)) {
-    items.push({ id: `suggest-${t.name}`, type: "task-suggestion", group: "Aufgaben-Vorschläge", title: `${t.id} ${t.title}`, detail: t.description, target: t.key, severity: "info", actions: [{ action: "task.acceptSuggestion", label: "Einplanen", target: t.key }, { action: "task.dismissSuggestion", label: "Verwerfen", target: t.key }] })
-  }
-  for (const t of ctx.tasks.list({ project: "*" }).filter((x) => x.pipeline?.status === "failed" && !ctx.tasks.isDone(x.status, x.project))) {
-    items.push({ id: `pipe-${t.name}`, type: "pipeline", group: "Pipeline rot", title: `${t.id} ${t.title}`, target: t.key, severity: "warn", actions: [{ action: "pipeline.start", label: "Erneut starten", args: { project: t.project, task: t.name } }] })
-  }
-  // relevance: unconnected and long unused → archive or link; large and orange → improve first
-  try {
-    const nodes = ctx.graph.nodes().filter((n) => n.tier === "active" && ["skill", "knowledge", "error", "script"].includes(n.kind))
-    const rel = ctx.relevance.compute(nodes, ctx.graph.allEdges())
-    for (const n of nodes) {
-      const r = rel.get(n.id)
-      if (!r) continue
-      const created = n.date ? Date.parse(n.date) : Date.now()
-      const i = n.id.indexOf(":")
-      const entry = ctx.store.getOwned(n.id.slice(0, i) as Entry["kind"], n.id.slice(i + 1))
-      const userOwned = !!entry && (isOwnDoc(entry) || aiAccessOf(entry) !== "frei")
-      if (!r.raw.edges && !r.raw.uses && Date.now() - created > 60 * DAY && !r.pinned && !userOwned) {
-        items.push({ id: `stale-${n.id}`, type: "stale", group: "Aufräumen", title: n.title, detail: "unvernetzt und lange ungenutzt – archivieren oder verknüpfen", target: n.id, severity: "info", actions: [{ action: "entry.archive", label: "Archivieren", target: n.id }] })
-      } else if (r.score >= 0.6 && r.ring === "warn") {
-        items.push({ id: `improve-${n.id}`, type: "improve", group: "Zuerst verbessern", title: n.title, detail: `viel genutzt, aber ${r.ringReason}`, target: n.id, severity: "warn", actions: [] })
-      }
-    }
-  } catch {
-    // relevance is optional
-  }
-  // outdated project docs
-  for (const l of (readText(join(ctx.store.stateDir, "outdated-docs.jsonl")) ?? "").split("\n").filter(Boolean).slice(-10)) {
-    try {
-      const j = JSON.parse(l) as { at: string; project: string; doc: string }
-      if (j.at >= since) items.push({ id: `outdated-${j.at}`, type: "project-doc", group: "Projekt-Doku prüfen", title: j.doc, detail: j.project, at: j.at, severity: "info", actions: [] })
-    } catch {
-      // ignore
-    }
-  }
-  const counts: Record<string, number> = {}
-  for (const i of items) counts[i.group] = (counts[i.group] ?? 0) + 1
-  return { since, items, counts }
 }
 
 // ---------------------------------------------------------------------------
@@ -399,6 +203,9 @@ export function projectPage(ctx: Ctx, name: string): Record<string, unknown> {
     decisions: memories.filter((e) => str(e.fields.type) === "entscheidung").map((e) => ({ id: `memory:${e.name}`, title: e.title, status: str(e.fields.status) })),
     results: (ctx.mem?.results() ?? []).filter((r) => matches(r.project, r.projectName)).slice(0, 20).map((r) => ({ id: r.id, title: r.title })),
     docs: ctx.links.backlinksOf(`project:${p.name}`).map((b) => ({ id: b.from, title: b.from })),
-    jobs: ctx.agentTasks.all().filter((j) => j.project === p.name).slice(0, 20).map((j) => ({ id: j.id, task: j.task, agent: j.agent, phase: j.phase, startedAt: j.startedAt })),
+    jobs: ctx.agentTasks.all().filter((j) => j.project === p.name).slice(0, 20).map((j) => ({ id: j.id, task: j.task, agent: j.agent, phase: j.phase, step: j.step, column: j.column, waitingFor: j.waitingFor, loops: j.loops, startedAt: j.startedAt })),
+    // workflow: effective per column, and without the project's own settings (the editor saves the difference)
+    flows: ctx.agentTasks.flows(p.name),
+    flowDefaults: resolveFlows(ctx.tasks.columns(p.name), ctx.options),
   }
 }

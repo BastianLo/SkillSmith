@@ -495,20 +495,20 @@ const mainScript = (r: MockRequest): MockReply => {
   }
   const firstUser = textOf(r.messages.find((m) => m.role === "user")?.content)
   // phase 4: agent task (proposal with a subagent that tries to write, implementation, review)
-  if (firstUser.startsWith("Du prüfst die Umsetzung")) return { text: "Passt zum Vorschlag.\n```json\n[]\n```" }
+  if (firstUser.startsWith("Du verifizierst die Umsetzung")) return { text: 'Passt zum Plan.\n```json\n{"verdicts": [{"criterion": "K1", "verdict": "erfuellt", "evidence": "impl.txt im Diff, TF1 bestanden"}], "findings": [], "summary": "erfüllt"}\n```' }
   if (firstUser.includes("AGENT_SUBTASK_WRITE")) {
     const path = /AGENT_SUBTASK_WRITE (\S+)/.exec(firstUser)?.[1] ?? join(PROJECT, "probe.txt")
     if (after === 0) return { tools: [{ name: "write", args: { filePath: path, content: "probe\n" } }] }
     return { text: `Subagent fertig: ${textOf(results[0]?.content).slice(0, 200)}` }
   }
-  if (firstUser.includes("PHASE 1 – VORSCHLAG")) {
+  if (firstUser.includes("SCHRITT PLANUNG")) {
     const wd = /git-Worktree (\S+)/.exec(firstUser)?.[1]?.replace(/[.,]$/, "") ?? PROJECT
-    if (lu.includes("PHASE 2")) {
+    if (lu.includes("SCHRITT UMSETZUNG")) {
       if (after === 0) return { tools: [{ name: "write", args: { filePath: join(wd, "impl.txt"), content: "umgesetzt\n" } }] }
       return { text: "Umgesetzt: impl.txt angelegt, geprüft mit test -f impl.txt." }
     }
     if (after === 0) return { tools: [{ name: "task", args: { description: "Schreibprobe", prompt: `AGENT_SUBTASK_WRITE ${join(wd, "probe.txt")}`, subagent_type: "general" } }] }
-    return { text: 'Plan steht.\n```json\n{"approach": "impl.txt anlegen", "files": ["impl.txt"], "steps": ["Datei anlegen"], "risks": [], "questions": [], "tests": ["test -f impl.txt"]}\n```' }
+    return { text: 'Plan steht.\n```json\n{"approach": "impl.txt anlegen", "files": ["impl.txt"], "steps": ["Datei anlegen"], "risks": [], "questions": [], "criteria": ["impl.txt existiert"], "testcases": [{"title": "Datei vorhanden", "mode": "befehl", "command": "test -f impl.txt", "expected": "Exit 0"}]}\n```' }
   }
   if (firstUser.includes("SUBAGENT_TASK")) {
     const cmds = ["echo one", "false", "echo two"]
@@ -698,7 +698,27 @@ const journal = () =>
     ? readFileSync(join(STORE, "state", "journal.jsonl"), "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
     : []
 const readStore = (...p: string[]) => readFileSync(join(STORE, ...p), "utf8")
-const logText = () => (existsSync(join(STORE, "state", "log", "skillsmith.log")) ? readStore("state", "log", "skillsmith.log") : "")
+/** The structured log (state/log/<day>.jsonl) as text lines "time LEVEL [scope] msg data". */
+const logText = () => {
+  const dir = join(STORE, "state", "log")
+  if (!existsSync(dir)) return ""
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".jsonl"))
+    .sort()
+    .map((f) => readFileSync(join(dir, f), "utf8"))
+    .join("")
+    .split("\n")
+    .filter(Boolean)
+    .map((l) => {
+      try {
+        const j = JSON.parse(l)
+        return `${j.t} ${String(j.lvl).toUpperCase()} [${j.scope}] ${j.msg}${j.data !== undefined ? ` ${typeof j.data === "string" ? j.data : JSON.stringify(j.data)}` : ""}`
+      } catch {
+        return ""
+      }
+    })
+    .join("\n")
+}
 
 try {
   check("opencode server starts with the plugin", await startServer("1"))
@@ -1064,6 +1084,21 @@ try {
     const noOrigin = await fetch(`${base}/api/action`, { method: "POST", headers: { "x-smith-token": tok, "content-type": "application/json" }, body: JSON.stringify({ action: "note.quick", args: { text: "x" } }) })
     check("web action without own origin is refused (CSRF)", noOrigin.status === 403, String(noOrigin.status))
 
+    // 5a – settings page, jobs, structured log
+    const setting = await act("settings.set", { values: { "hints.max": 4 } })
+    const settingsView = await get("settings")
+    const hintsMax = settingsView.values?.find((v: any) => v.path === "hints.max")
+    check("settings page: value saved in settings.json (one commit), source shown", setting.status === 200 && subjects()[0]?.startsWith("skillsmith(web): settings hints.max") && hintsMax?.value === 4 && hintsMax?.source === "einstellungen" && existsSync(join(STORE, "settings.json")), `${setting.status} ${subjects()[0]} ${hintsMax?.source}`)
+    const security = await act("settings.set", { values: { "web.readOnly": true } })
+    check("security value needs a confirmation (428)", security.status === 428, String(security.status))
+    const sched = await get("scheduled")
+    const startJobs: string[] = []
+    for (const j of sched.jobs ?? []) if ((await get(`scheduled/history?id=${j.id}`)).some((r: any) => r.trigger === "Start")) startJobs.push(j.id)
+    check("jobs register: start jobs ran once at startup (lifecycle, doctor, prune …)", sched.available === true && ["lifecycle", "prune", "embeddings"].every((id) => startJobs.includes(id)), startJobs.join(","))
+    const pruneRun = sched.jobs.find((j: any) => j.id === "prune")?.last
+    const jobLog = await get(`logs?cid=${encodeURIComponent(pruneRun?.id ?? "-")}&level=debug`)
+    check("structured log: the lines of a job run carry its id", jobLog.lines?.some((l: any) => l.cid === pruneRun?.id && l.area === "jobs"), `${jobLog.lines?.length} line(s)`)
+
     // project with a pipeline and an agent task in its own worktree
     const app = join(ROOT, "app")
     mkdirSync(app, { recursive: true })
@@ -1076,7 +1111,10 @@ try {
     const assign = await act("agent.assign", { target: `task:${taskName}`, agent: "build", model: "mock/mock-1", workplace: "worktree" })
     const jobId = assign.body.data?.job
     check("agent task assigned (token, worktree, proposal phase without write tools)", assign.status === 200 && !!jobId, assign.body.error ?? assign.body.message)
-    const awaiting = await waitFor("proposal", async () => ((await get(`job?id=${jobId}`)).job?.phase === "awaiting_approval" ? (await get(`job?id=${jobId}`)).job : undefined), 180_000, 1000)
+    const awaiting = await waitFor("plan", async () => {
+      const j = (await get(`job?id=${jobId}`)).job
+      return j?.phase === "waiting" && j.waitingFor === "plan" ? j : undefined
+    }, 180_000, 1000)
     const workdir: string = awaiting?.workdir ?? ""
     const rejected = await get("audit?category=rejected&limit=50")
     check(
@@ -1086,12 +1124,17 @@ try {
     )
     check("structured proposal parsed and stored at the job", awaiting?.proposals?.[0]?.approach === "impl.txt anlegen" && existsSync(join(workdir, ".git")), awaiting?.proposals?.[0]?.approach)
     await act("agent.approve", { job: jobId })
-    const inTest = await waitFor("in_test", async () => {
+    const inTest = await waitFor("acceptance", async () => {
       const j = (await get(`job?id=${jobId}`)).job
-      return j?.phase === "in_test" || j?.phase === "error" ? j : undefined
+      return (j?.phase === "waiting" && j.waitingFor === "accept") || j?.phase === "error" || j?.phase === "halted" ? j : undefined
     }, 240_000, 1000)
-    const taskAfter = (await get(`task?id=${taskName}`)).task
-    check("implementation in the worktree → pipeline green → review → card in test", inTest?.phase === "in_test" && existsSync(join(workdir, "impl.txt")) && inTest.pipelineFirstGreen === true && inTest.review?.status === "done" && taskAfter.status === "test", `${inTest?.phase} ${inTest?.error ?? ""} · ${taskAfter.status} · pipeline ${inTest?.pipelineFirstGreen}`)
+    const taskData = await get(`task?id=${taskName}`)
+    const taskAfter = taskData.task
+    check(
+      "workflow: implementation in the worktree → pipeline green → test case by command → verification → gate 2 in „verifikation“",
+      inTest?.waitingFor === "accept" && existsSync(join(workdir, "impl.txt")) && inTest.pipelineFirstGreen === true && inTest.review?.status === "done" && taskAfter.status === "verifikation" && taskData.fields?.testcases?.[0]?.last?.result === "bestanden" && taskData.fields?.verification?.ok === true,
+      `${inTest?.phase}/${inTest?.waitingFor} ${inTest?.error ?? inTest?.halted?.reason ?? ""} · ${taskAfter.status} · pipeline ${inTest?.pipelineFirstGreen} · ${JSON.stringify(taskData.fields?.testcases?.[0]?.last ?? null)}`,
+    )
     const diff = await get(`job/diff?id=${jobId}`)
     check("diff viewer data: the changed file of the worktree", diff.some((f: any) => f.path === "impl.txt"), diff.map((f: any) => f.path).join(","))
     const accept = await act("agent.accept", { job: jobId, mode: "merge" })
@@ -1105,11 +1148,11 @@ try {
     const task2 = await act("task.create", { title: "Zweite Planung", project: "e2e-app", body: "Nur planen." })
     const assign2 = await act("agent.assign", { target: task2.body.target, agent: "hera", workplace: "worktree" })
     const job2 = assign2.body.data?.job
-    const planned = await waitFor("proposal hera", async () => {
+    const planned = await waitFor("plan hera", async () => {
       const j = (await get(`job?id=${job2}`)).job
-      return j?.phase === "awaiting_approval" || j?.phase === "error" ? j : undefined
+      return (j?.phase === "waiting" && j.waitingFor === "plan") || j?.phase === "error" ? j : undefined
     }, 120_000, 1000)
-    check("agent with model „mock-1“ (no provider) plans with mock/mock-1 instead of failing with „Model not found: mock-1/.“", planned?.phase === "awaiting_approval" && planned?.model === "mock/mock-1" && /mock-1/.test(planned?.modelNote ?? ""), `${assign2.status} ${planned?.phase} ${planned?.model} ${planned?.error ?? assign2.body.error ?? ""}`)
+    check("agent with model „mock-1“ (no provider) plans with mock/mock-1 instead of failing with „Model not found: mock-1/.“", planned?.waitingFor === "plan" && planned?.model === "mock/mock-1" && /mock-1/.test(planned?.modelNote ?? ""), `${assign2.status} ${planned?.phase} ${planned?.model} ${planned?.error ?? assign2.body.error ?? ""}`)
     if (job2) await act("agent.discard", { job: job2 }, { force: true }).then(() => undefined, () => undefined)
     const task3 = await act("task.create", { title: "Dritte Planung", project: "e2e-app" })
     const wrongModel = await act("agent.assign", { target: task3.body.target, agent: "build", model: "litellm/gibts-nicht", workplace: "home" })

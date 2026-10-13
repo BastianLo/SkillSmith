@@ -75,7 +75,6 @@ const LIFECYCLE: Partial<Record<Kind, (ctx: Ctx) => { stale: number; archive: nu
 
 export class Curator {
   private stateFile: string
-  private busy = false
 
   constructor(private ctx: Ctx) {
     this.stateFile = join(ctx.store.stateDir, "curator.json")
@@ -403,12 +402,6 @@ export class Curator {
   // script re-tests (toolsmith)
   // ---------------------------------------------------------------------------
 
-  retestDue(): boolean {
-    if (!this.ctx.options.toolsmith.enabled) return false
-    const st = this.state()
-    return daysBetween(st.lastRetestAt ?? st.createdAt) >= 7
-  }
-
   async retestScripts(trigger: string, names?: string[]): Promise<string> {
     const scripts = this.aiList("script").filter((s) => (names ? names.includes(s.name) : s.tier !== "archive"))
     if (!names) this.saveState({ lastRetestAt: nowIso() })
@@ -631,14 +624,6 @@ export class Curator {
     return plan
   }
 
-  consolidationDue(): boolean {
-    const o = this.ctx.options
-    if (!o.consolidate) return false
-    const st = this.state()
-    const since = st.lastConsolidationAt ?? st.createdAt
-    return daysBetween(since) >= o.curatorIntervalDays
-  }
-
   private reviewsRunning(): boolean {
     let names: string[] = []
     try {
@@ -650,10 +635,11 @@ export class Curator {
     return names.some((n) => isLocked(this.ctx.store.locksDir, n.slice(0, -5), stale))
   }
 
-  async consolidate(trigger: string): Promise<string> {
+  /** LLM consolidation per smith with work (job "consolidate"; `only` limits the smiths, e.g. ["skillsmith"]). */
+  async consolidate(trigger: string, only?: Smith[]): Promise<string> {
     await this.ctx.semantic?.ensureCurrent(15_000)
     const plan = this.planConsolidation()
-    const work = SMITHS.filter((s) => plan[s].clusters.length || plan[s].problems.length || plan[s].pairs.length)
+    const work = SMITHS.filter((s) => (!only?.length || only.includes(s)) && (plan[s].clusters.length || plan[s].problems.length || plan[s].pairs.length))
     if (work.length === 0) {
       this.saveState({ lastConsolidationAt: nowIso(), lastConsolidationResult: "nothing to consolidate" })
       return "Nichts zu konsolidieren (keine ähnlichen oder problematischen Einträge)."
@@ -744,23 +730,6 @@ export class Curator {
     return `${smith}: ${summary}${fin.commit ? ` (commit ${fin.commit})` : ""}${result.error ? ` – Hinweis: ${result.error}` : ""}`
   }
 
-  /** Called on startup and after reviews; never throws. */
-  maybeRun(trigger: string): void {
-    if (this.busy) return
-    this.busy = true
-    void (async () => {
-      try {
-        await this.lifecycle(trigger)
-        if (this.retestDue()) await this.retestScripts(trigger)
-        if (this.consolidationDue()) await this.consolidate(trigger)
-      } catch (err) {
-        this.ctx.log.error("curator failed", errorMessage(err))
-      } finally {
-        this.busy = false
-      }
-    })()
-  }
-
   async dryRunReport(): Promise<string> {
     const moves = this.planLifecycle()
     const groups = this.planGlossaryMerges()
@@ -791,7 +760,7 @@ export class Curator {
     if (SMITHS.every((s) => !plan[s].clusters.length && !plan[s].problems.length && !plan[s].pairs.length)) lines.push("Keine Konsolidierungskandidaten.")
     const st = this.state()
     lines.push("")
-    lines.push(`Letzte Konsolidierung: ${st.lastConsolidationAt ?? "noch nie"} · nächste fällig: ${this.consolidationDue() ? "jetzt" : "später"}`)
+    lines.push(`Letzte Konsolidierung: ${st.lastConsolidationAt ?? "noch nie"} (Zeitplan: Seite Jobs, „Konsolidierung“)`)
     lines.push(`Letzter Skript-Test: ${st.lastRetestAt ?? "noch nie"}${st.lastRetestResult ? ` (${st.lastRetestResult})` : ""}`)
     return lines.join("\n")
   }

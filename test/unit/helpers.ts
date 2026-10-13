@@ -73,7 +73,8 @@ export function makeCtx(
   extra: { checkClaims?: boolean; claimWait?: { agent: number; command: number }; fetch?: any; scope?: Scope; noMemoryDb?: boolean } = {},
 ): Ctx {
   const root = tmp()
-  const { options } = resolveOptions({ storeDir: join(root, "store"), ...overrides }, {})
+  const raw = { storeDir: join(root, "store"), ...overrides }
+  const { options } = resolveOptions(raw, {})
   const store = new Store(options.storeDir, silentLogger)
   store.init()
   const redactor = createRedactor(options.redact)
@@ -118,7 +119,7 @@ export function makeCtx(
   ctx.scope = () => ({ ...scope })
   ctx.graph = new Graph(store, ctx.mem, ctx.history)
   ctx.ops.setMemory(ctx.mem, ctx.graph)
-  attachServices(ctx)
+  attachServices(ctx, undefined, raw)
   ctx.doctor = new Doctor(ctx)
   ctx.web = new WebServer(ctx)
   ctx.hints = new HintEngine(ctx)

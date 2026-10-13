@@ -1,5 +1,7 @@
 import { homedir } from "node:os"
+import { readFileSync } from "node:fs"
 import { isAbsolute, join, resolve } from "node:path"
+import { checkCron } from "./util/cron"
 
 export type WriteMode = "auto" | "stage" | "shadow"
 export type SmithName = "skillsmith" | "docsmith" | "errorsmith" | "toolsmith" | "memorysmith" | "doctor"
@@ -249,6 +251,12 @@ export interface Options {
     similar: number
     /** deleted lines per file from which the review flags a large deletion */
     largeDeletion: number
+    /** workflow per column (5b): step, agent, model, checks, onSuccess/onFailure, gate, maxLoops */
+    flow: Record<string, FlowConfigOption>
+    /** back jumps (test/verification failed) before a card halts and asks the user */
+    maxLoops: number
+    /** moving a card into a column with an agent step starts the agent */
+    autoStart: boolean
   }
 
   pipeline: {
@@ -270,6 +278,30 @@ export interface Options {
     macos: boolean
     events: string[]
   }
+
+  // --- inbox "Zu prüfen" -----------------------------------------------------------
+  inbox: {
+    /** per message type (or "change.<smith>"): an = shown, gebuendelt = one collapsed row, aus = hidden */
+    types: Record<string, "an" | "gebuendelt" | "aus">
+    /** changes of the AI older than this many days are not listed (even without a visit) */
+    changesDays: number
+    /** at most this many rows per group (the rest behind "mehr") */
+    maxPerGroup: number
+  }
+
+  // --- structured log (state/log/<day>.jsonl) -----------------------------------------
+  log: {
+    level: "debug" | "info" | "warn" | "error"
+    /** level per area, e.g. { "pipeline": "debug" } */
+    areas: Record<string, "debug" | "info" | "warn" | "error">
+    /** keep log files this many days */
+    days: number
+    /** and at most this many MB in total */
+    maxMB: number
+  }
+
+  /** schedules of the recurring jobs by id (see src/core/jobs.ts); unset fields keep the job's default */
+  jobs: Record<string, JobConfig>
 
   // --- curator -------------------------------------------------------------------
   curatorIntervalDays: number
@@ -355,6 +387,35 @@ export interface Options {
 export function envFlag(value: string | undefined): boolean {
   if (value === undefined) return false
   return /^(1|true|yes|on)$/i.test(value.trim())
+}
+
+export const DEFAULT_TASK_COLUMNS = ["neu", "planung", "umsetzung", "test", "verifikation", "erledigt"]
+export const STEP_KIND_VALUES = ["plan", "implement", "test", "verify", "keiner"] as const
+export const EXIT_CHECK_VALUES = ["pipeline", "tests", "criteria", "review", "pr-check"] as const
+
+/** Workflow of one column in the options (tasks.flow.<column>); see src/core/workflow.ts. */
+export interface FlowConfigOption {
+  step?: (typeof STEP_KIND_VALUES)[number]
+  agent?: string
+  model?: string
+  checks?: Array<(typeof EXIT_CHECK_VALUES)[number]>
+  onSuccess?: string
+  onFailure?: string
+  gate?: boolean
+  maxLoops?: number
+}
+
+export interface JobConfig {
+  enabled?: boolean
+  start?: boolean
+  daily?: string[]
+  weekdays?: string[]
+  intervalMin?: number
+  idleMin?: number
+  cron?: string
+  afterReview?: boolean
+  catchUp?: "once" | "skip"
+  params?: Record<string, string>
 }
 
 export function defaultStoreDir(env: NodeJS.ProcessEnv = process.env): string {
@@ -488,7 +549,7 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
     },
     links: { ticketUrl: "" },
     tasks: {
-      columns: ["neu", "eingeplant", "in_umsetzung", "test", "erledigt"],
+      columns: DEFAULT_TASK_COLUMNS,
       wipLimits: {},
       maxDepth: 2,
       idPrefix: "T",
@@ -505,9 +566,15 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
       reviewAgent: "",
       similar: 3,
       largeDeletion: 200,
+      flow: {},
+      maxLoops: 3,
+      autoStart: true,
     },
     pipeline: { maxParallel: 2, keepRuns: 20, timeoutMin: 15, requireGreen: "warn", requireToken: true, sandbox: false, logMaxKB: 2048 },
-    notify: { toast: true, browser: true, macos: false, events: ["proposal", "permission", "pipeline", "agent-done", "agent-error"] },
+    notify: { toast: true, browser: true, macos: false, events: ["proposal", "permission", "pipeline", "agent-done", "agent-error", "job-failed", "halted"] },
+    inbox: { types: { change: "gebuendelt" }, changesDays: 14, maxPerGroup: 50 },
+    log: { level: "info", areas: {}, days: 14, maxMB: 50 },
+    jobs: {},
     curatorIntervalDays: 7,
     curatorMaxChanges: 5,
     consolidate: true,
@@ -560,44 +627,66 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
   }
 }
 
-type Validator = (value: unknown) => unknown
+/**
+ * What a value looks like – read by the settings page to build its form (type, limits,
+ * allowed values) and by the validators below.
+ */
+export type ValueSpec =
+  | { t: "int"; min: number; max: number }
+  | { t: "num"; min: number; max: number }
+  | { t: "bool" }
+  | { t: "str"; optional?: boolean; format?: "python" | "regex" | "idPrefix" | "cron" }
+  | { t: "enum"; values: string[]; optional?: boolean }
+  | { t: "list"; values?: string[]; format?: "times" | "columns"; nonEmpty?: boolean }
+  | { t: "record"; item: ValueSpec }
+  | { t: "object"; fields: Record<string, ValueSpec> }
 
-const int = (min: number, max = Number.MAX_SAFE_INTEGER): Validator => (v) => {
-  const n = typeof v === "string" ? Number(v) : v
-  if (typeof n !== "number" || !Number.isFinite(n)) throw new Error("expected a number")
-  return Math.min(max, Math.max(min, Math.round(n)))
-}
-const num = (min: number, max: number): Validator => (v) => {
-  const n = typeof v === "string" ? Number(v) : v
-  if (typeof n !== "number" || !Number.isFinite(n)) throw new Error("expected a number")
-  return Math.min(max, Math.max(min, n))
-}
-const bool: Validator = (v) => {
+export type Validator = ((value: unknown) => unknown) & { spec: ValueSpec }
+const mk = (spec: ValueSpec, fn: (value: unknown) => unknown): Validator => Object.assign(fn, { spec })
+
+const int = (min: number, max = Number.MAX_SAFE_INTEGER): Validator =>
+  mk({ t: "int", min, max }, (v) => {
+    const n = typeof v === "string" ? Number(v) : v
+    if (typeof n !== "number" || !Number.isFinite(n)) throw new Error("expected a number")
+    return Math.min(max, Math.max(min, Math.round(n)))
+  })
+const num = (min: number, max: number): Validator =>
+  mk({ t: "num", min, max }, (v) => {
+    const n = typeof v === "string" ? Number(v) : v
+    if (typeof n !== "number" || !Number.isFinite(n)) throw new Error("expected a number")
+    return Math.min(max, Math.max(min, n))
+  })
+const bool: Validator = mk({ t: "bool" }, (v) => {
   if (typeof v === "boolean") return v
   if (v === "true" || v === 1) return true
   if (v === "false" || v === 0) return false
   throw new Error("expected true/false")
-}
-const str: Validator = (v) => {
+})
+const asStr = (v: unknown): string => {
   if (typeof v !== "string") throw new Error("expected a string")
   return v
 }
-const optStr: Validator = (v) => (v === undefined || v === null || v === "" ? undefined : str(v))
-const strList: Validator = (v) => {
+const str: Validator = mk({ t: "str" }, asStr)
+const optStr: Validator = mk({ t: "str", optional: true }, (v) => (v === undefined || v === null || v === "" ? undefined : asStr(v)))
+const asList = (v: unknown): string[] => {
   if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) throw new Error("expected a list of strings")
-  return v
+  return v as string[]
 }
-const oneOf = (...values: string[]): Validator => (v) => {
-  if (typeof v !== "string" || !values.includes(v)) throw new Error(`expected one of ${values.join(", ")}`)
-  return v
-}
-const optOneOf = (...values: string[]): Validator => (v) => (v === undefined || v === null || v === "" ? undefined : oneOf(...values)(v))
-const listOf = (...values: string[]): Validator => (v) => {
-  const list = strList(v) as string[]
-  const bad = list.filter((x) => !values.includes(x))
-  if (bad.length) throw new Error(`unknown value(s) ${bad.join(", ")}; allowed: ${values.join(", ")}`)
-  return list
-}
+const strList: Validator = mk({ t: "list" }, asList)
+const oneOf = (...values: string[]): Validator =>
+  mk({ t: "enum", values }, (v) => {
+    if (typeof v !== "string" || !values.includes(v)) throw new Error(`expected one of ${values.join(", ")}`)
+    return v
+  })
+const optOneOf = (...values: string[]): Validator =>
+  mk({ t: "enum", values, optional: true }, (v) => (v === undefined || v === null || v === "" ? undefined : oneOf(...values)(v)))
+const listOf = (...values: string[]): Validator =>
+  mk({ t: "list", values }, (v) => {
+    const list = asList(v)
+    const bad = list.filter((x) => !values.includes(x))
+    if (bad.length) throw new Error(`unknown value(s) ${bad.join(", ")}; allowed: ${values.join(", ")}`)
+    return list
+  })
 
 const smithCommon = {
   enabled: bool,
@@ -606,29 +695,80 @@ const smithCommon = {
 }
 
 const ACCESS = ["frei", "vorschlag", "lesen", "privat"]
-const recordOf = (item: Validator): Validator => (v) => {
-  if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("expected an object")
-  const out: Record<string, unknown> = {}
-  for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = item(x)
-  return out
-}
-const nonEmptyList: Validator = (v) => {
-  const l = strList(v) as string[]
+const recordOf = (item: Validator): Validator =>
+  mk({ t: "record", item: item.spec }, (v) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("expected an object")
+    const out: Record<string, unknown> = {}
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      try {
+        out[k] = item(x)
+      } catch (err) {
+        throw new Error(`${k}: ${(err as Error).message}`)
+      }
+    }
+    return out
+  })
+/** An object with known optional fields (jobs, column flow): unknown fields are an error, missing ones stay unset. */
+const objectOf = (fields: Record<string, Validator>): Validator =>
+  mk({ t: "object", fields: Object.fromEntries(Object.entries(fields).map(([k, f]) => [k, f.spec])) }, (v) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("expected an object")
+    const out: Record<string, unknown> = {}
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      const f = fields[k]
+      if (!f) throw new Error(`unknown field "${k}"`)
+      if (x === undefined || x === null) continue
+      try {
+        out[k] = f(x)
+      } catch (err) {
+        throw new Error(`${k}: ${(err as Error).message}`)
+      }
+    }
+    return out
+  })
+const nonEmptyList: Validator = mk({ t: "list", nonEmpty: true }, (v) => {
+  const l = asList(v)
   if (!l.length) throw new Error("expected at least one value")
   return l
-}
-const times: Validator = (v) => {
-  const l = strList(v) as string[]
-  for (const t of l) if (!/^([01]?\d|2[0-3]):[0-5]\d$/.test(t)) throw new Error(`"${t}" is not a time like 09:00`)
+})
+const TIME_RE = /^([01]?\d|2[0-3]):[0-5]\d$/
+const times: Validator = mk({ t: "list", format: "times" }, (v) => {
+  const l = asList(v)
+  for (const t of l) if (!TIME_RE.test(t)) throw new Error(`"${t}" is not a time like 09:00`)
   return l
-}
-const slugList: Validator = (v) => {
-  const l = nonEmptyList(v) as string[]
+})
+const slugList: Validator = mk({ t: "list", format: "columns", nonEmpty: true }, (v) => {
+  const l = asList(v)
+  if (!l.length) throw new Error("expected at least one value")
   for (const c of l) if (!/^[a-z][a-z0-9_]{0,30}$/.test(c)) throw new Error(`"${c}" is not a valid column id (a-z, 0-9, _)`)
   if (new Set(l).size !== l.length) throw new Error("column ids must be unique")
   return l
-}
+})
+const formatted = (format: "python" | "regex" | "idPrefix" | "cron", check: (s: string) => string): Validator => mk({ t: "str", format }, (v) => check(asStr(v)))
 const confirmMode = oneOf("name", "preview", "none")
+const LEVELS = ["debug", "info", "warn", "error"]
+const INBOX_MODES = ["an", "gebuendelt", "aus"]
+export const NOTIFY_EVENTS = ["proposal", "permission", "pipeline", "agent-done", "agent-error", "job-failed", "halted", "inbox"] as const
+
+/** Schedule of a job (src/core/jobs.ts); every field optional – unset fields keep the job's default. */
+const jobConfig = objectOf({
+  enabled: bool,
+  start: bool,
+  daily: times,
+  weekdays: mk({ t: "list", values: ["1", "2", "3", "4", "5", "6", "7"] }, (v) => {
+    const l = (Array.isArray(v) ? v : []).map((x) => String(x))
+    if (!Array.isArray(v) || l.some((x) => !/^[1-7]$/.test(x))) throw new Error("expected weekdays 1 (Monday) … 7 (Sunday)")
+    return l
+  }),
+  intervalMin: num(0, 525_600),
+  idleMin: num(0, 10_080),
+  cron: mk({ t: "str", optional: true, format: "cron" }, (v) => (v === undefined || v === null || v === "" ? "" : checkCron(asStr(v)))),
+  afterReview: bool,
+  catchUp: oneOf("once", "skip"),
+  params: mk({ t: "record", item: { t: "str" } }, (v) => {
+    if (!v || typeof v !== "object" || Array.isArray(v)) throw new Error("expected an object")
+    return v
+  }),
+})
 
 type Rule = Validator | { [key: string]: Rule }
 
@@ -688,11 +828,10 @@ const SCHEMA: Record<string, Rule> = {
   toolsmith: {
     ...smithCommon,
     python: str,
-    pythonTarget: (v) => {
-      const s = str(v) as string
+    pythonTarget: formatted("python", (s) => {
       if (!/^3\.\d{1,2}$/.test(s)) throw new Error('expected a Python version like "3.9"')
       return s
-    },
+    }),
     allowPipInstall: bool,
     sandbox: oneOf("auto", "off", "required"),
     testTimeoutSec: int(5, 3600),
@@ -714,11 +853,10 @@ const SCHEMA: Record<string, Rule> = {
     decisionReviewDays: num(1, 3650),
     standBlock: bool,
     standMaxChars: int(200, 20000),
-    ticketPattern: (v) => {
-      const s = str(v) as string
+    ticketPattern: formatted("regex", (s) => {
       new RegExp(s)
       return s
-    },
+    }),
     captureSubagents: bool,
     crossProject: bool,
     stateHistory: int(1, 1000),
@@ -759,11 +897,10 @@ const SCHEMA: Record<string, Rule> = {
     columns: slugList,
     wipLimits: recordOf(int(0, 10_000)),
     maxDepth: int(1, 5),
-    idPrefix: (v) => {
-      const s = str(v) as string
+    idPrefix: formatted("idPrefix", (s) => {
       if (!/^[A-Z]{1,6}$/.test(s)) throw new Error("expected 1–6 capital letters")
       return s
-    },
+    }),
     agents: bool,
     requireToken: bool,
     planAllowBash: bool,
@@ -777,6 +914,20 @@ const SCHEMA: Record<string, Rule> = {
     reviewAgent: str,
     similar: int(0, 10),
     largeDeletion: int(10, 100_000),
+    flow: recordOf(
+      objectOf({
+        step: oneOf(...STEP_KIND_VALUES),
+        agent: str,
+        model: str,
+        checks: listOf(...EXIT_CHECK_VALUES),
+        onSuccess: str,
+        onFailure: str,
+        gate: bool,
+        maxLoops: int(0, 20),
+      }),
+    ),
+    maxLoops: int(0, 20),
+    autoStart: bool,
   },
   pipeline: {
     maxParallel: int(1, 16),
@@ -787,7 +938,10 @@ const SCHEMA: Record<string, Rule> = {
     sandbox: bool,
     logMaxKB: int(16, 1024 * 1024),
   },
-  notify: { toast: bool, browser: bool, macos: bool, events: strList },
+  notify: { toast: bool, browser: bool, macos: bool, events: listOf(...NOTIFY_EVENTS) },
+  inbox: { types: recordOf(oneOf(...INBOX_MODES)), changesDays: num(1, 3650), maxPerGroup: int(5, 1000) },
+  log: { level: oneOf(...LEVELS), areas: recordOf(oneOf(...LEVELS)), days: num(1, 3650), maxMB: num(1, 10_000) },
+  jobs: recordOf(jobConfig),
   curatorIntervalDays: num(0.01, 365),
   curatorMaxChanges: int(1, 100),
   consolidate: bool,
@@ -839,52 +993,103 @@ const SCHEMA: Record<string, Rule> = {
   debug: bool,
 }
 
+/** Where a value comes from: default < opencode.json < settings page (settings.json in the store) < environment. */
+export type OptionSource = "standard" | "opencode" | "einstellungen" | "umgebung"
+
 export interface ResolvedOptions {
   options: Options
   warnings: string[]
+  /** source of every value that is not the default ("web.port" → "einstellungen") */
+  sources: Record<string, OptionSource>
 }
 
-export function resolveOptions(raw: unknown, env: NodeJS.ProcessEnv = process.env): ResolvedOptions {
+/** Never taken from settings.json: the store itself and secrets (they stay out of git). */
+export const SETTINGS_DENY = new Set(["storeDir", "embedding.apiKey"])
+
+/** Every configurable value with its spec ("hints.max" → int 1–10). Records (wipLimits, jobs) are one value. */
+export function optionLeaves(): Array<{ path: string; spec: ValueSpec }> {
+  const out: Array<{ path: string; spec: ValueSpec }> = []
+  const walk = (schema: Record<string, Rule>, prefix: string) => {
+    for (const [k, rule] of Object.entries(schema)) {
+      if (typeof rule === "function") out.push({ path: `${prefix}${k}`, spec: rule.spec })
+      else walk(rule, `${prefix}${k}.`)
+    }
+  }
+  walk(SCHEMA, "")
+  return out
+}
+
+/** Validates one value of a leaf ("web.port", 4848) → normalised value; throws with the reason. */
+export function validateOption(path: string, value: unknown): unknown {
+  let rule: Rule | undefined = { ...SCHEMA }
+  for (const part of path.split(".")) {
+    if (!rule || typeof rule === "function") throw new Error(`unknown option "${path}"`)
+    rule = (rule as Record<string, Rule>)[part]
+  }
+  if (typeof rule !== "function") throw new Error(`"${path}" is a group, not a value`)
+  return rule(value)
+}
+
+/** Value at a dotted path of an options-like object. */
+export function valueAt(obj: unknown, path: string): unknown {
+  let cur: any = obj
+  for (const part of path.split(".")) {
+    if (cur === null || typeof cur !== "object") return undefined
+    cur = cur[part]
+  }
+  return cur
+}
+
+export function resolveOptions(raw: unknown, env: NodeJS.ProcessEnv = process.env, settings?: unknown): ResolvedOptions {
   const options = defaults(env)
   const warnings: string[] = []
-  const input = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
-  // nested objects are validated key by key; an invalid value keeps its default
-  const apply = (schema: Record<string, Rule>, target: Record<string, any>, values: Record<string, unknown>, prefix: string) => {
+  const sources: Record<string, OptionSource> = {}
+  // nested objects are validated key by key; an invalid value keeps the previous one
+  const apply = (schema: Record<string, Rule>, target: Record<string, any>, values: Record<string, unknown>, prefix: string, source: OptionSource, origin: string) => {
     for (const [key, value] of Object.entries(values)) {
       const rule = schema[key]
       const label = `${prefix}${key}`
       if (!rule) {
-        warnings.push(`unknown option "${label}" ignored`)
+        warnings.push(`unknown option "${label}" ignored${origin}`)
+        continue
+      }
+      if (source === "einstellungen" && SETTINGS_DENY.has(label)) {
+        warnings.push(`option "${label}" is not taken from settings.json${origin}`)
         continue
       }
       if (typeof rule === "function") {
         try {
           target[key] = rule(value)
+          sources[label] = source
         } catch (err) {
-          warnings.push(`option "${label}": ${(err as Error).message} (default kept)`)
+          warnings.push(`option "${label}": ${(err as Error).message} (previous value kept)${origin}`)
         }
         continue
       }
       if (!value || typeof value !== "object" || Array.isArray(value)) {
-        warnings.push(`option "${label}": expected an object (default kept)`)
+        warnings.push(`option "${label}": expected an object (previous value kept)${origin}`)
         continue
       }
       target[key] ??= {}
-      apply(rule, target[key], value as Record<string, unknown>, `${label}.`)
+      apply(rule, target[key], value as Record<string, unknown>, `${label}.`, source, origin)
     }
   }
-  apply(SCHEMA, options as unknown as Record<string, any>, input, "")
-  if (env.SKILLSMITH_DISABLED === "1") options.enabled = false
-  if (env.SKILLSMITH_DEBUG === "1") options.debug = true
-  if (env.SKILLSMITH_EMBEDDINGS === "0") options.embedding.enabled = false
+  const asObject = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {})
+  apply(SCHEMA, options as unknown as Record<string, any>, asObject(raw), "", "opencode", "")
+  if (settings !== undefined) apply(SCHEMA, options as unknown as Record<string, any>, asObject(settings), "", "einstellungen", " (settings.json)")
+  const fromEnv = (path: string) => (sources[path] = "umgebung")
+  if (env.SKILLSMITH_DISABLED === "1") (options.enabled = false), fromEnv("enabled")
+  if (env.SKILLSMITH_DEBUG === "1") (options.debug = true), fromEnv("debug")
+  if (env.SKILLSMITH_EMBEDDINGS === "0") (options.embedding.enabled = false), fromEnv("embedding.enabled")
   // standalone CLI: environment wins over the config file, so `skillsmith start` and the plugin agree
-  if (env.SKILLSMITH_STORE_DIR) options.storeDir = expandHome(env.SKILLSMITH_STORE_DIR)
-  if (env.SKILLSMITH_WEB_AUTOSTART !== undefined) options.web.autostart = envFlag(env.SKILLSMITH_WEB_AUTOSTART)
-  if (env.SKILLSMITH_WEB_HOST) options.web.host = env.SKILLSMITH_WEB_HOST
+  if (env.SKILLSMITH_STORE_DIR) (options.storeDir = expandHome(env.SKILLSMITH_STORE_DIR)), fromEnv("storeDir")
+  if (env.SKILLSMITH_WEB_AUTOSTART !== undefined) (options.web.autostart = envFlag(env.SKILLSMITH_WEB_AUTOSTART)), fromEnv("web.autostart")
+  if (env.SKILLSMITH_WEB_HOST) (options.web.host = env.SKILLSMITH_WEB_HOST), fromEnv("web.host")
   if (env.SKILLSMITH_WEB_PORT) {
     const p = Number(env.SKILLSMITH_WEB_PORT)
-    if (Number.isInteger(p) && p > 0 && p <= 65535) options.web.port = p
+    if (Number.isInteger(p) && p > 0 && p <= 65535) (options.web.port = p), fromEnv("web.port")
   }
+  if (env.SKILLSMITH_HOME && !sources.storeDir) sources.storeDir = "umgebung"
   options.storeDir = resolve(expandHome(options.storeDir))
   for (const [label, o] of [
     ["", options],
@@ -896,7 +1101,37 @@ export function resolveOptions(raw: unknown, env: NodeJS.ProcessEnv = process.en
       o.archiveDays = o.staleDays
     }
   }
-  return { options, warnings }
+  return { options, warnings, sources }
+}
+
+export const SETTINGS_FILE = "settings.json"
+
+/** Overrides of the settings page (settings.json in the store); {} when missing or unreadable. */
+export function readSettingsFile(storeDir: string): { values: Record<string, unknown>; error?: string } {
+  let text: string
+  try {
+    text = readFileSync(join(storeDir, SETTINGS_FILE), "utf8")
+  } catch {
+    return { values: {} }
+  }
+  try {
+    const v = JSON.parse(text)
+    return { values: v && typeof v === "object" && !Array.isArray(v) ? v : {} }
+  } catch (err) {
+    return { values: {}, error: `settings.json is not valid JSON: ${(err as Error).message}` }
+  }
+}
+
+/**
+ * Options of a plugin instance: opencode.json first (it may move the store), then the settings
+ * page of that store on top. The environment wins over both.
+ */
+export function loadOptions(raw: unknown, env: NodeJS.ProcessEnv = process.env): ResolvedOptions & { settings: Record<string, unknown> } {
+  const first = resolveOptions(raw, env)
+  const file = readSettingsFile(first.options.storeDir)
+  const second = resolveOptions(raw, env, file.values)
+  if (file.error) second.warnings.push(file.error)
+  return { ...second, settings: file.values }
 }
 
 /** "provider/model" → SDK model ref (modelID may itself contain "/"). */

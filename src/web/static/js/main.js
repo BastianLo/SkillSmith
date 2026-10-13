@@ -1,7 +1,8 @@
 // Shell of the web view: navigation, router, live updates, command palette, quick note.
 import { get, onLive, onLiveState, startLive, takeToken, token } from "./api.js"
-import { debounce, h, icon, storeGet, swap } from "./dom.js"
-import { act, app, errorText, modal, toast } from "./ui.js"
+import { debounce, h, icon, storeGet, storeSet, swap } from "./dom.js"
+import { AREAS, areaOf, isActive, match, pages } from "./nav.js"
+import { act, app, closeModals, errorText, modal, toast } from "./ui.js"
 
 const view = document.getElementById("view")
 
@@ -15,77 +16,90 @@ export function applyTheme(t) {
 applyTheme(storeGet("theme", "auto"))
 
 // ---------------------------------------------------------------------------
-// navigation
+// navigation: feature areas (collapsible) and the tabs of the current area
 // ---------------------------------------------------------------------------
-const NAV = [
-  ["Arbeiten", [
-    ["eingang", "Eingang", "inbox", "inbox"],
-    ["board", "Board", "board", "tasks"],
-    ["projekte", "Projekte", "project"],
-    ["agenten", "Agenten", "agent", "agents"],
-    ["tagesnotiz", "Tagesnotiz", "journal"],
-  ]],
-  ["Wissen", [
-    ["", "Übersicht", "home"],
-    ["dokumente", "Dokumente", "doc"],
-    ["suche", "Suche", "search"],
-    ["graph", "Graph", "graph"],
-    ["landkarte", "Landkarte", "map"],
-    ["chat", "Wissens-Chat", "chat"],
-    ["glossar", "Glossar", "book"],
-    ["tags", "Tags", "tag"],
-  ]],
-  ["Einträge", [
-    ["liste/skill", "Skills", "skill"],
-    ["liste/error", "Fehler", "error"],
-    ["werkstatt", "Skripte", "script"],
-    ["liste/memory", "Erinnerungen", "memory"],
-    ["liste/arbeitsstand", "Arbeitsstände", "state"],
-    ["liste/ergebnis", "Ergebnisse", "result"],
-    ["kandidaten", "Kandidaten", "candidate"],
-  ]],
-  ["Einblick", [
-    ["statistik", "Statistik", "chart"],
-    ["audit", "Audit-Log", "audit"],
-    ["historie", "Versionen", "history"],
-    ["konflikte", "Konflikte", "conflict", "conflicts"],
-    ["freigaben", "Freigaben", "staged", "staged"],
-    ["simulator", "Hinweis-Simulator", "flask"],
-    ["sessions", "Sessions", "chat"],
-  ]],
-  ["System", [
-    ["export", "Export", "export"],
-    ["einstellungen", "Einstellungen", "settings"],
-  ]],
-]
-
 const badges = {}
+const areaBadges = {}
+const badgeValues = {}
+let openAreas = new Set(storeGet("nav.open", ["start"]))
+let currentArea = null
+
+function saveOpen() {
+  storeSet("nav.open", [...openAreas])
+}
+
 function buildSide() {
   const side = document.getElementById("side")
   swap(
     side,
-    NAV.map(([group, items]) => [
-      h("h4", { text: group }),
-      items.map(([path, label, ic, badge]) => {
-        const b = badge ? h("span", { class: "badge hidden" }) : null
-        if (badge) badges[badge] = b
-        return h("a", { href: `#/${path}`, "data-path": path }, icon(ic), h("span", { text: label }), b)
-      }),
-    ]),
+    AREAS.map((a) => {
+      const sum = h("span", { class: "badge muted hidden" })
+      areaBadges[a.id] = sum
+      const head = h("button", { class: "area-head", type: "button", "data-area": a.id, "aria-expanded": "false", title: a.label }, icon("chevron", 12), h("span", { class: "grow", text: a.label }), sum)
+      const list = h(
+        "div",
+        { class: "area-items", id: `area-${a.id}` },
+        a.items.map((it) => {
+          const b = it.badge ? h("span", { class: "badge hidden" }) : null
+          if (it.badge) badges[it.badge] = b
+          return h("a", { href: `#/${it.path}`, "data-path": it.path, "data-area": a.id }, icon(it.icon), h("span", { text: it.label }), b)
+        }),
+      )
+      head.addEventListener("click", () => {
+        if (openAreas.has(a.id)) openAreas.delete(a.id)
+        else openAreas.add(a.id)
+        saveOpen()
+        drawAreas()
+      })
+      return h("div", { class: "area", "data-area": a.id }, head, list)
+    }),
   )
   side.addEventListener("click", (e) => {
     if (e.target.closest("a")) document.body.classList.remove("side-open")
   })
+  drawAreas()
 }
 
-function markNav(path) {
-  for (const a of document.querySelectorAll("#side a")) {
-    const p = a.dataset.path
-    a.classList.toggle("active", p === "" ? path === "" : path === p || path.startsWith(`${p}/`) || (p === "werkstatt" && path.startsWith("werkstatt")))
+function drawAreas() {
+  for (const el of document.querySelectorAll("#side .area")) {
+    const id = el.dataset.area
+    const open = openAreas.has(id) || id === currentArea
+    el.classList.toggle("open", open)
+    el.classList.toggle("current", id === currentArea)
+    el.querySelector(".area-head").setAttribute("aria-expanded", String(open))
+    // collapsed: the area shows the sum of its badges
+    const sum = AREAS.find((a) => a.id === id).items.reduce((n, it) => n + (it.badge ? badgeValues[it.badge] || 0 : 0), 0)
+    const b = areaBadges[id]
+    b.textContent = String(sum)
+    b.classList.toggle("hidden", open || !sum)
   }
 }
 
+function markNav(path, area) {
+  currentArea = area
+  for (const a of document.querySelectorAll("#side a")) a.classList.toggle("active", isActive(a.dataset.path, path))
+  drawAreas()
+  drawTabs(path, area)
+}
+
+/** Tabs of the current feature area above the page. */
+function drawTabs(path, area) {
+  const bar = document.getElementById("subnav")
+  const a = AREAS.find((x) => x.id === area)
+  document.body.classList.toggle("has-subnav", !!a)
+  if (!a) return swap(bar)
+  swap(
+    bar,
+    h("span", { class: "subnav-title" }, icon(a.icon, 14), a.label),
+    a.items.map((it) => {
+      const b = it.badge && badgeValues[it.badge] ? h("span", { class: "badge muted", text: String(badgeValues[it.badge]) }) : null
+      return h("a", { href: `#/${it.path}`, class: isActive(it.path, path) ? "on" : "" }, h("span", { text: it.label }), b)
+    }),
+  )
+}
+
 function setBadge(name, n, cls = "") {
+  badgeValues[name] = n
   const b = badges[name]
   if (!b) return
   b.textContent = String(n)
@@ -100,8 +114,10 @@ const refreshBadges = debounce(async () => {
     setBadge("conflicts", st.doctor ? st.doctor.needsUser : 0)
     setBadge("agents", st.tasks ? st.tasks.agents : 0, "accent")
     setBadge("tasks", st.tasks ? st.tasks.open : 0, "muted")
+    setBadge("jobs", st.jobs ? st.jobs.failed : 0, "danger")
     const staged = st.myDocs ? st.myDocs.proposals : 0
     setBadge("staged", staged, "accent")
+    drawAreas()
     document.getElementById("scope").textContent = [st.project, st.branch].filter(Boolean).join(" · ")
   } catch (_) {
     // header badges are best effort
@@ -115,87 +131,13 @@ function flags() {
     box,
     app.readOnly ? h("span", { class: "chip warn", title: i.readOnlyConfig ? "web.readOnly ist gesetzt" : "Schreiben ist für diese Sitzung gesperrt (Einstellungen)" }, icon("lock", 12), "nur lesend") : null,
     i && !i.token ? h("span", { class: "chip danger", title: "web.token: false – jeder Prozess auf diesem Rechner kann lesen und schreiben" }, "ohne Token") : null,
+    i && i.pendingRestart && i.pendingRestart.length ? h("a", { class: "chip warn", href: "#/einstellungen", title: `Wirkt nach einem Neustart von opencode: ${i.pendingRestart.join(", ")}` }, icon("refresh", 12), "Neustart nötig") : null,
   )
 }
 
 // ---------------------------------------------------------------------------
 // router
 // ---------------------------------------------------------------------------
-const V = (name) => () => import(`./views/${name}.js`)
-const ROUTES = [
-  ["", V("overview")],
-  ["eingang", V("inbox")],
-  ["dokumente", V("docs")],
-  ["liste/:kind", V("lists")],
-  ["suche", V("search")],
-  ["eintrag/*id", V("entry")],
-  ["editor/*id", V("editor")],
-  ["neu/:what", V("create")],
-  ["graph", V("graph")],
-  ["landkarte", V("map")],
-  ["konflikte", V("conflicts")],
-  ["board", V("board")],
-  ["aufgabe/:id", V("task")],
-  ["projekte", V("projects")],
-  ["projekt-neu", V("project-edit")],
-  ["projekt/:name/bearbeiten", V("project-edit")],
-  ["projekt/:name", V("project")],
-  ["pipeline/:project/:run", V("pipeline")],
-  ["agenten", V("agents")],
-  ["agenten/:job", V("job")],
-  ["statistik", V("stats")],
-  ["audit", V("audit")],
-  ["historie", V("history")],
-  ["commit/:hash", V("commit")],
-  ["simulator", V("simulator")],
-  ["tagesnotiz", V("journal")],
-  ["ticket/:id", V("ticket")],
-  ["session/:id", V("session")],
-  ["sessions", V("sessions")],
-  ["glossar", V("glossary")],
-  ["tags", V("tags")],
-  ["kandidaten", V("candidates")],
-  ["freigaben", V("staged")],
-  ["werkstatt", V("workshop")],
-  ["werkstatt/:name", V("workshop")],
-  ["export", V("export")],
-  ["chat", V("chat")],
-  ["einstellungen", V("settings")],
-  ["verlauf", V("timeline")],
-]
-// links of the read-only view of v2 keep working
-const LEGACY = { entry: "eintrag", list: "liste", search: "suche", conflicts: "konflikte", timeline: "verlauf" }
-
-function match(path) {
-  const parts = path.split("/").filter(Boolean)
-  if (parts[0] && LEGACY[parts[0]]) parts[0] = LEGACY[parts[0]]
-  for (const [pattern, load] of ROUTES) {
-    const pp = pattern.split("/").filter(Boolean)
-    const params = {}
-    let ok = true
-    for (let i = 0; i < pp.length; i++) {
-      const p = pp[i]
-      if (p.startsWith("*")) {
-        params[p.slice(1)] = decodeURIComponent(parts.slice(i).join("/"))
-        if (!params[p.slice(1)]) ok = false
-        i = pp.length
-        break
-      }
-      if (parts[i] === undefined) {
-        ok = false
-        break
-      }
-      if (p.startsWith(":")) params[p.slice(1)] = decodeURIComponent(parts[i])
-      else if (p !== parts[i]) {
-        ok = false
-        break
-      }
-    }
-    if (ok && (pp.some((p) => p.startsWith("*")) || pp.length === parts.length)) return { pattern, load, params, path: parts.join("/") }
-  }
-  return null
-}
-
 let current = null
 let seq = 0
 
@@ -214,12 +156,16 @@ export function setQuery(patch, replace = true) {
   return q
 }
 
+let lastPath = null
 async function route() {
   const my = ++seq
   const raw = location.hash.replace(/^#/, "") || "/"
   const qi = raw.indexOf("?")
   const path = (qi >= 0 ? raw.slice(0, qi) : raw).replace(/^\/+|\/+$/g, "")
   const query = new URLSearchParams(qi >= 0 ? raw.slice(qi + 1) : "")
+  // dialogs belong to the page they were opened on
+  if (path !== lastPath) closeModals()
+  lastPath = path
   if (current) {
     for (const fn of current.cleanups.splice(0)) {
       try {
@@ -230,7 +176,7 @@ async function route() {
     }
   }
   const m = match(path)
-  markNav(m ? m.path : path)
+  markNav(m ? m.path : path, areaOf(m))
   const ctx = {
     el: view,
     params: m ? m.params : {},
@@ -285,7 +231,7 @@ async function route() {
 // ---------------------------------------------------------------------------
 async function palette() {
   const { openPalette } = await import("./palette.js")
-  openPalette(NAV)
+  openPalette(pages())
 }
 
 export async function quickNote() {
@@ -325,7 +271,7 @@ function keys(e) {
   } else if (e.key === "g") {
     gPrefix = Date.now()
   } else if (Date.now() - gPrefix < 1200) {
-    const to = { h: "", i: "eingang", b: "board", g: "graph", s: "statistik", a: "audit", d: "dokumente", t: "tagesnotiz", p: "projekte" }[e.key]
+    const to = { h: "", i: "eingang", b: "board", g: "graph", s: "statistik", a: "audit", d: "dokumente", t: "tagesnotiz", p: "projekte", e: "einstellungen", j: "jobs", l: "logs" }[e.key]
     if (to !== undefined) location.hash = `#/${to}`
     gPrefix = 0
   }
@@ -340,7 +286,15 @@ function live() {
     dot.className = `live-dot ${s === "on" ? "on" : s === "off" ? "off" : ""}`
     dot.title = s === "on" ? "Live-Aktualisierung aktiv" : s === "disabled" ? "Live-Aktualisierung aus (web.liveUpdates)" : "Live-Aktualisierung getrennt – verbinde neu …"
   })
-  for (const t of ["run.finished", "commit", "task.changed", "agent.job", "inbox.changed", "pipeline.run"]) onLive(t, () => refreshBadges())
+  for (const t of ["run.finished", "commit", "task.changed", "agent.job", "inbox.changed", "pipeline.run", "job.changed", "settings.changed"]) onLive(t, () => refreshBadges())
+  onLive("settings.changed", async () => {
+    try {
+      app.info = await get("info")
+      flags()
+    } catch (_) {
+      // ignore
+    }
+  })
   const loadedAt = Date.now()
   onLive("notify", (d) => {
     if (d.at && Number(d.at) < loadedAt - 5000) return

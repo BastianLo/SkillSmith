@@ -65,11 +65,11 @@ await page.waitForTimeout(800)
 {
   await go("#/board?projekt=kundenportal", 1200)
   const card = page.locator('.tcard[data-name="t-3"]')
-  const target = page.locator('.col[data-col="in_umsetzung"] .col-body')
+  const target = page.locator('.col[data-col="umsetzung"] .col-body')
   await card.dragTo(target)
   await page.waitForTimeout(1500)
   let t = (await api("task?id=t-3")).task
-  check("Board: Drag & Drop wechselt die Spalte", t.status === "in_umsetzung", t.status)
+  check("Board: Drag & Drop wechselt die Spalte", t.status === "umsetzung", t.status)
   await page.locator('.tcard[data-name="t-4"]').focus()
   await page.keyboard.press(" ")
   await page.keyboard.press("ArrowRight")
@@ -83,7 +83,7 @@ await page.waitForTimeout(800)
     await page.waitForTimeout(1500)
   }
   t = (await api("task?id=t-4")).task
-  check("Board: Tastatur verschiebt (mit WIP-Bestätigung)", t.status === "in_umsetzung", `${t.status}${dialog ? ", WIP-Dialog" : ""}`)
+  check("Board: Tastatur verschiebt (mit WIP-Bestätigung)", t.status === "umsetzung", `${t.status}${dialog ? ", WIP-Dialog" : ""}`)
 }
 
 // 3. task: checklist toggle, attachment upload (file input), subtask
@@ -138,20 +138,33 @@ await page.waitForTimeout(800)
   check("KI-Vorschlag per Diff übernommen", d.body.includes("Migration vor dem Deployment ausführen") && !d.proposals.length)
 }
 
-// 7. agent: accept and merge the worktree branch
+// 7. agent: manual test case on the task page → verification → acceptance with merge
 {
   const jobs = await api("jobs")
-  const job = jobs.find((j: any) => j.phase === "in_test")
+  const job = jobs.find((j: any) => j.phase === "waiting" && j.waitingFor === "tests")
   if (job) {
+    await go(`#/aufgabe/${job.task}?tab=tests`, 1500)
+    await page.screenshot({ path: join(shots, "f07-kriterien-tests.png") })
+    const tf3 = page.locator(".tcase").filter({ hasText: "Abmelden im Browser" })
+    await tf3.getByRole("button", { name: "bestanden" }).click()
+    let j: any
+    for (let i = 0; i < 40; i++) {
+      await page.waitForTimeout(500)
+      j = (await api(`job?id=${job.id}`)).job
+      if (j.phase === "waiting" && j.waitingFor === "accept") break
+    }
+    const f = (await api(`task?id=${job.task}`)).fields
+    check("Manueller Testfall → Verifikation → wartet auf Abnahme", j.waitingFor === "accept" && f.verification?.ok === true && f.testcases.every((t: any) => t.last?.result === "bestanden"), `${j.phase}/${j.waitingFor}`)
     await go(`#/agenten/${job.id}`, 1500)
+    await page.screenshot({ path: join(shots, "f07-auftrag.png") })
     await clickText("Abnehmen")
     await page.waitForTimeout(400)
     await page.locator(".overlay .btn.primary").first().click()
     await page.waitForTimeout(2500)
-    const j = (await api(`job?id=${job.id}`)).job
-    const t = (await api("task?id=t-1")).task
+    j = (await api(`job?id=${job.id}`)).job
+    const t = (await api(`task?id=${job.task}`)).task
     check("Agenten-Auftrag abgenommen und gemergt", j.phase === "accepted" && t.status === "erledigt", `${j.phase} / ${t.status}`)
-  } else check("Agenten-Auftrag abgenommen und gemergt", false, "kein Auftrag in test")
+  } else check("Agenten-Auftrag: wartet auf manuelle Tests", false, JSON.stringify(jobs.map((j: any) => [j.phase, j.waitingFor])))
 }
 
 // 8. palette: jump to an entry
@@ -178,7 +191,7 @@ await page.waitForTimeout(800)
 
 // 10. read-only lock blocks writes
 {
-  await go("#/einstellungen", 1000)
+  await go("#/einstellungen?tab=sitzung", 1000)
   await page.getByRole("button", { name: /Schreiben für diese Sitzung sperren/ }).click()
   await page.waitForTimeout(800)
   const r = await fetch(`${base}api/action`, { method: "POST", headers: { "x-smith-token": token, "content-type": "application/json", origin: base.replace(/\/$/, "") }, body: JSON.stringify({ action: "note.quick", args: { text: "x" } }) })
@@ -242,6 +255,47 @@ await page.waitForTimeout(800)
       })
     }
   }
+}
+
+// 11. settings page: change a value, save (one commit), source shows "Einstellungen"
+{
+  await go("#/einstellungen?q=Hinweise%20je%20Nachricht", 1200)
+  const row = page.locator('.setting[data-path="hints.max"]')
+  await row.locator("input[type=number]").fill("5")
+  await row.locator("input[type=number]").dispatchEvent("change")
+  await page.waitForTimeout(300)
+  await clickText("Speichern", ".savebar")
+  await page.waitForTimeout(1500)
+  const st = await api("settings")
+  const v = st.values.find((x: any) => x.path === "hints.max")
+  check("Einstellungen: Wert gespeichert, Quelle „Einstellungen“", v.value === 5 && v.source === "einstellungen", `${v.value} / ${v.source}`)
+  await page.screenshot({ path: join(shots, "f11-einstellung-gespeichert.png") })
+}
+
+// 12. inbox: hide a message type from the group menu
+{
+  await go("#/eingang", 1200)
+  const before = (await api("inbox")).types.find((t: any) => t.type === "task-suggestion")
+  const group = page.locator(".inbox-group", { hasText: "Aufgaben-Vorschläge" }).first()
+  await group.locator("h2 button").click()
+  await page.waitForTimeout(300)
+  await page.locator(".menu button", { hasText: "nicht mehr anzeigen" }).first().click()
+  await page.waitForTimeout(1500)
+  const r = await api("inbox")
+  check("Eingang: Meldungsart direkt ausgeblendet", r.types.find((t: any) => t.type === "task-suggestion").mode === "aus" && !r.items.some((i: any) => i.type === "task-suggestion"), `vorher ${before?.mode}`)
+  await page.screenshot({ path: join(shots, "f12-eingang-ausgeblendet.png") })
+}
+
+// 13. jobs: run a job by hand, history shows the run with a log link
+{
+  await go("#/jobs", 1200)
+  await page.locator("#job-prune").getByRole("button", { name: "Jetzt" }).click()
+  await page.waitForTimeout(1500)
+  const hist = await api("scheduled/history?id=prune")
+  check("Jobs: von Hand gestartet, Verlauf mit Lauf", hist.some((x: any) => x.trigger === "von Hand" && x.status === "ok"), hist.map((x: any) => `${x.trigger}:${x.status}`).join(", "))
+  await page.locator("#job-prune").getByRole("button", { name: "Verlauf" }).click()
+  await page.waitForTimeout(800)
+  await page.screenshot({ path: join(shots, "f13-job-verlauf.png") })
 }
 
 await browser.close()

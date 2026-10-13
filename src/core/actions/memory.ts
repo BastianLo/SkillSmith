@@ -8,6 +8,7 @@ import { canonicalEdge, isStoreId } from "../graph"
 import { glossarySlug, meaningsOf, spec } from "../kinds"
 import type { WorkState } from "../memory-db"
 import { GuardError } from "../ops"
+import { isSmithAgent } from "../prompts"
 import type { ActionDef } from "./types"
 import { defineAction } from "./types"
 import { defaultAccess, parseId, requireEntry, smithOfId, uniqueName } from "./util"
@@ -140,7 +141,7 @@ export const MEMORY_ACTIONS: ActionDef[] = [
     area: "neu",
     smith: (a) => spec(a.kind as Kind).smith,
     args: {
-      kind: { t: "enum", values: ["skill", "error", "glossary"] },
+      kind: { t: "enum", values: ["skill", "error", "glossary", "agent"] },
       name: { t: "string", max: 64, optional: true, pattern: /^([a-z0-9]+(-[a-z0-9]+)*)?$/ },
       title: { t: "string", max: 160, min: 1 },
       description: { t: "string", max: 1000, optional: true },
@@ -160,8 +161,14 @@ export const MEMORY_ACTIONS: ActionDef[] = [
       const name = a.name || uniqueName(ctx, kind, a.title)
       const fields: Record<string, unknown> = { author: "user", ai: defaultAccess(ctx) }
       if (kind === "error") Object.assign(fields, { status: str(f.status) === "open" ? "open" : "solved", signatures: strArray(f.signatures), context: strArray(f.context) })
+      if (kind === "agent") {
+        if (!/^[A-Za-z0-9][\w.-]*$/.test(a.title)) throw new GuardError("Der Agentenname (Titel) darf keine Leerzeichen enthalten – so heißt er in opencode")
+        if (isSmithAgent(a.title)) throw new GuardError("Dieser Name gehört einem internen Agenten von skillsmith")
+        const model = str(f.model)
+        Object.assign(fields, { mode: ["primary", "subagent", "all"].includes(str(f.mode)) ? str(f.mode) : "primary", ...(model ? { model } : {}), ...(typeof f.temperature === "number" ? { temperature: f.temperature } : {}) })
+      }
       const msg = await ctx.ops.create(run, kind, { name, title: a.title, description: a.description || a.title, tags: a.tags, fields, body: a.body ?? "", reason: "vom Nutzer angelegt", approved: true })
-      return { message: msg.split("\n")[0], target: `${kind}:${name}`, open: `#/editor/${kind}:${name}` }
+      return { message: `${msg.split("\n")[0]}${kind === "agent" ? " – wirkt nach einem Neustart von opencode" : ""}`, target: `${kind}:${name}`, open: `#/editor/${kind}:${name}` }
     },
   }),
   defineAction({

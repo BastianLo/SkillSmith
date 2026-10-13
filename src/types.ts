@@ -1,8 +1,8 @@
 import type { SmithName, WriteMode } from "./config"
 
 export type Smith = SmithName
-export type Kind = "skill" | "knowledge" | "glossary" | "error" | "script" | "memory" | "task" | "project"
-export const KINDS: Kind[] = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"]
+export type Kind = "skill" | "knowledge" | "glossary" | "error" | "script" | "memory" | "task" | "project" | "agent"
+export const KINDS: Kind[] = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "agent"]
 /** kinds the smiths maintain (reviewers, curator, doctor); tasks and projects belong to the user */
 export const CONTENT_KINDS: Kind[] = ["skill", "knowledge", "glossary", "error", "script", "memory"]
 
@@ -202,10 +202,15 @@ export type ActionKind =
   | "state"
   | "result"
 
+/** Non-entry files a run may change: settings.json, gym tasks, review knowledge. */
+export type SystemTarget = "settings" | "gym"
+export const SYSTEM_TARGETS: SystemTarget[] = ["settings", "gym"]
+export const isSystemTarget = (t: string): t is SystemTarget => (SYSTEM_TARGETS as string[]).includes(t)
+
 export interface RunAction {
   kind: ActionKind
-  /** kind of the affected entry */
-  target: Kind
+  /** kind of the affected entry (or a system file like settings.json) */
+  target: Kind | SystemTarget
   name: string
   reason?: string
   detail?: string
@@ -270,6 +275,8 @@ export interface Run {
   /** memorysmith: captures shown in the prompt (consumed after a successful run) */
   captureIds?: string[]
   /** local changes (no git): complete before/after for the audit log */
+  /** work started by this run that must wait until its commit is done and its claims are released (finalizeRun) */
+  followUps?: Array<() => Promise<void>>
   localChanges?: Array<{ id: string; before?: unknown; after?: unknown }>
   /** actions the gates rejected (audit log) */
   rejections?: Array<{ at: string; tool?: string; target?: string; message: string }>

@@ -62,8 +62,4 @@ export function immediate<T>(db: SqlDatabase, fn: () => T): T {
 }
 
 /** Local calendar day (YYYY-MM-DD) of a timestamp. */
-export function localDay(ms: number): string {
-  const d = new Date(ms)
-  const p = (n: number) => String(n).padStart(2, "0")
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
-}
+export { localDay } from "../util/text"

@@ -7,7 +7,7 @@ const SKILL_BODY = "## When to use\n\n\n## Steps\n1. \n\n## Pitfalls\n- \n\n## V
 const ERROR_BODY = "## Symptom\n```\n\n```\n\n## Ursache\n\n\n## Lösung\n1. \n\n## Prüfung\n"
 const MEMORY_BODY = { entscheidung: "## Entscheidung\n\n\n## Begründung\n\n\n## Alternativen\n- ", vorgabe: "", erfahrung: "" }
 
-const TITLES = { dokument: "Neues Dokument", skill: "Neuer Skill", fehler: "Neuer Fehler", glossar: "Neuer Glossar-Begriff", erinnerung: "Neue Erinnerung" }
+const TITLES = { dokument: "Neues Dokument", skill: "Neuer Skill", fehler: "Neuer Fehler", glossar: "Neuer Glossar-Begriff", erinnerung: "Neue Erinnerung", agent: "Neuer Agent" }
 
 async function bodyEditor(doc, opts = {}) {
   const box = h("div", { class: "cm-mini" })
@@ -115,6 +115,39 @@ export default async function create(ctx) {
             if (r?.open) location.hash = r.open
           },
         }, icon("check", 14), "Anlegen"),
+      ),
+    )
+    return
+  }
+
+  if (what === "agent") {
+    title.placeholder = "Name in opencode, ohne Leerzeichen (z. B. planer)"
+    desc.placeholder = "Wofür der Agent da ist (opencode zeigt das bei der Auswahl)"
+    const { box, ed } = await bodyEditor("", { placeholder: "System-Prompt des Agenten" })
+    const mode = select([["primary", "Haupt-Agent (primary)"], ["subagent", "Subagent"], ["all", "beides"]], "primary", null)
+    const model = h("input", { class: "input wide", list: "agent-models", placeholder: "leer = Modell der Session bzw. opencode-Standard" })
+    const dl = h("datalist", { id: "agent-models" })
+    get("models").then((m) => (m.models || []).forEach((x) => dl.append(h("option", { value: x })))).catch(() => undefined)
+    put(
+      card,
+      h("p", { class: "muted", text: "Agenten aus dem Store trägt skillsmith beim Start in opencode ein – Prompt, Modell und Rechte sind versioniert wie jeder Eintrag. Verbesserungen des Prompts schlägt der Job „Agenten verbessern“ als Diff vor." }),
+      field("Name", title),
+      field("Beschreibung", desc),
+      h("div", { class: "fields" }, field("Art", mode), field("Modell", h("div", null, model, dl))),
+      field("Prompt", box),
+      h(
+        "div",
+        { class: "toolbar" },
+        h("button", {
+          class: "btn primary",
+          type: "button",
+          onclick: async () => {
+            if (!title.value.trim()) return title.focus()
+            const r = await act("entry.create", { kind: "agent", title: title.value.trim(), description: desc.value.trim() || undefined, body: ed.value, tags: [], fields: { mode: mode.value, model: model.value.trim() || undefined } })
+            if (r?.target) location.hash = `#/eintrag/${r.target}`
+          },
+        }, icon("check", 14), "Anlegen"),
+        h("a", { class: "btn", href: "#/liste/agent", text: "Abbrechen" }),
       ),
     )
     return

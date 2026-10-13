@@ -14,12 +14,14 @@ import { Tasks } from "./tasks"
 import { RelevanceEngine } from "./relevance"
 import type { DatabaseClass } from "./sqlite"
 import { Versions } from "./versions"
+import { Settings } from "./settings"
 
 /** Use types that only count for the session that used the entry (background agents never count as use). */
 const USE_ONLY = new Set<string>([M.load, M.hintShown, M.hintFollowed, M.hintHelped, M.hintFailed, M.scriptRun, M.view])
 
-export function attachServices(ctx: Ctx, Database?: DatabaseClass): void {
+export function attachServices(ctx: Ctx, Database?: DatabaseClass, rawOptions: unknown = {}): void {
   ctx.bus = new EventBus()
+  ctx.settings = new Settings(ctx, rawOptions)
   ctx.links = new LinkIndex(ctx.store, () => ctx.options.tasks.idPrefix)
   ctx.graph.links = ctx.links
   ctx.projects = new Projects(ctx.store, ctx.options)
@@ -70,16 +72,14 @@ export function branchOf(ctx: Ctx): string | undefined {
   }
 }
 
-/** Startup housekeeping of the phase-4 stores (once per process start). */
-export function startupServices(ctx: Ctx): { journal: number; baseline: number; prunedAudit: number; prunedMetrics: number } {
+/** Startup housekeeping of the phase-4 stores (once per process start; retention is the job "prune"). */
+export function startupServices(ctx: Ctx): { journal: number; baseline: number } {
   const journal = ctx.audit?.importJournal() ?? 0
   ctx.audit?.repairTargets()
   const baseline = ctx.metrics?.importUsageBaseline() ?? 0
-  const prunedAudit = ctx.audit?.prune() ?? 0
-  const prunedMetrics = ctx.metrics?.prune() ?? 0
   ctx.pipeline.markInterrupted()
   if (ctx.agentTasks.active().length) ctx.agentTasks.start()
-  return { journal, baseline, prunedAudit, prunedMetrics }
+  return { journal, baseline }
 }
 
 export async function closeServices(ctx: Ctx): Promise<void> {

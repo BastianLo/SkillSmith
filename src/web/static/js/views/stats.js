@@ -240,14 +240,18 @@ const AREA = {
       "div",
       { class: "stack" },
       chartCard(
-        "Je Agent und Modell",
+        "Je Agent, Version und Modell",
         table(
           [
             ["agent", "Agent"],
+            ["version", "Version", false, (v) => (v === "opencode" ? "opencode" : String(v || "").slice(0, 8))],
             ["model", "Modell"],
             ["jobs", "Aufträge", true],
-            ["approvedFirst", "1. Vorschlag frei", true, (v, r) => (r.jobs ? `${Math.round((v / r.jobs) * 100)} %` : "–")],
+            ["steps", "Schritte", true],
+            ["approvedFirst", "1. Plan frei", true, (v, r) => (r.plans ? `${Math.round((v / Math.max(1, r.jobs)) * 100)} %` : "–")],
             ["revisions", "Überarbeitungen", true],
+            ["loops", "Rücksprünge", true],
+            ["halted", "angehalten", true],
             ["fixRounds", "Nachbesserungen", true, (v, r) => v + r.improveRounds],
             ["firstGreen", "Pipeline 1× grün", true, (v, r) => (r.withPipeline ? `${Math.round((v / r.withPipeline) * 100)} %` : "–")],
             ["findings", "Review-Befunde", true],
@@ -258,7 +262,7 @@ const AREA = {
           s.agents,
         ),
         "agenten",
-        tableCsv([["agent", "Agent"], ["model", "Modell"], ["jobs", "Aufträge"], ["approvedFirst", "frei beim 1."], ["revisions", "Überarbeitungen"], ["fixRounds", "Nachbesserungen"], ["firstGreen", "1× grün"], ["withPipeline", "mit Pipeline"], ["findings", "Befunde"], ["avgMinutes", "Minuten"], ["tokens", "Tokens"], ["cost", "Kosten"]], s.agents),
+        tableCsv([["agent", "Agent"], ["version", "Version"], ["model", "Modell"], ["jobs", "Aufträge"], ["steps", "Schritte"], ["approvedFirst", "frei beim 1."], ["revisions", "Überarbeitungen"], ["loops", "Rücksprünge"], ["halted", "angehalten"], ["fixRounds", "Nachbesserungen"], ["firstGreen", "1× grün"], ["withPipeline", "mit Pipeline"], ["findings", "Befunde"], ["avgMinutes", "Minuten"], ["tokens", "Tokens"], ["cost", "Kosten"]], s.agents),
       ),
       h(
         "div",

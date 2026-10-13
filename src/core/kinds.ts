@@ -9,6 +9,7 @@ import { AI_ACCESS, MEMORY_TYPES } from "../types"
 import { fold, slugify } from "../util/text"
 import { parseDoc, serializeDoc, str, strArray } from "./frontmatter"
 import { headings } from "./skill"
+import { readTaskFields, writeTaskFields } from "./task-fields"
 
 export interface EntryContent {
   name: string
@@ -447,6 +448,7 @@ const SPECS: Record<Kind, KindSpec> = {
       }
       if (fm.suggested === true || fm.suggested === "true") fields.suggested = true
       if (fm.attachments !== undefined) fields.attachments = strArray(fm.attachments)
+      Object.assign(fields, readTaskFields(fm))
       return { name, title: str(fm.title) || taskId(name), description: str(fm.description), tags: normalizeTags(fm.labels ?? fm.tags), fields, body }
     },
     serialize(e) {
@@ -462,6 +464,7 @@ const SPECS: Record<Kind, KindSpec> = {
           ...["due", "parent", "assignee", "agent", "model", "project", "branch", "ticket", "created_by", "proposal", "worktree", "workdir"].map((k) => [k, str(f[k])] as [string, unknown]),
           ["suggested", f.suggested === true ? true : undefined],
           ["attachments", strArray(f.attachments)],
+          ...writeTaskFields(f),
           ...commonOut(f),
         ],
         e.body,
@@ -497,6 +500,7 @@ const SPECS: Record<Kind, KindSpec> = {
       if (fm.columns !== undefined) fields.columns = strArray(fm.columns)
       if (fm.wip && typeof fm.wip === "object" && !Array.isArray(fm.wip)) fields.wip = fm.wip
       if (fm.pipeline && typeof fm.pipeline === "object" && !Array.isArray(fm.pipeline)) fields.pipeline = fm.pipeline
+      if (fm.flow && typeof fm.flow === "object" && !Array.isArray(fm.flow)) fields.flow = fm.flow
       if (fm.aliases !== undefined) fields.aliases = strArray(fm.aliases)
       return { name, title: str(fm.title) || name, description: str(fm.description), tags: normalizeTags(fm.tags), fields, body }
     },
@@ -515,6 +519,7 @@ const SPECS: Record<Kind, KindSpec> = {
           ["columns", strArray(f.columns)],
           ["wip", f.wip && typeof f.wip === "object" && Object.keys(f.wip).length ? f.wip : undefined],
           ["pipeline", f.pipeline && typeof f.pipeline === "object" ? f.pipeline : undefined],
+          ["flow", f.flow && typeof f.flow === "object" && Object.keys(f.flow).length ? f.flow : undefined],
           ["aliases", strArray(f.aliases)],
           ["tags", e.tags],
           ...commonOut(f),
@@ -524,6 +529,58 @@ const SPECS: Record<Kind, KindSpec> = {
     },
     searchFields(e) {
       return [[4, e.title], [3, e.name.replace(/-/g, " ")], [2, e.description], [2, e.tags.join(" ")], [1, str(e.fields.home_path)], ...bodyField(e)]
+    },
+  },
+  agent: {
+    kind: "agent",
+    smith: "skillsmith",
+    dir: "agents",
+    layout: "file",
+    main: ".md",
+    tiers: ["active", "archive"],
+    label: "Agent",
+    labelPlural: "Agenten",
+    aliases: ["agent", "agenten"],
+    parse(content, fallbackName) {
+      const { fm, body } = parseDoc(content)
+      const name = str(fm.name) || fallbackName
+      const fields: Record<string, unknown> = { ...commonIn(fm) }
+      const mode = str(fm.mode)
+      fields.mode = mode === "subagent" || mode === "all" ? mode : "primary"
+      for (const k of ["model", "color", "role"]) if (str(fm[k])) fields[k] = str(fm[k])
+      const temp = Number(fm.temperature)
+      if (fm.temperature !== undefined && Number.isFinite(temp)) fields.temperature = Math.min(2, Math.max(0, temp))
+      const steps = Number(fm.steps)
+      if (fm.steps !== undefined && Number.isInteger(steps) && steps > 0) fields.steps = steps
+      for (const k of ["tools", "permission"]) if (fm[k] && typeof fm[k] === "object" && !Array.isArray(fm[k])) fields[k] = fm[k]
+      if (str(fm.imported_from)) fields.imported_from = str(fm.imported_from)
+      return { name, title: str(fm.title) || name, description: str(fm.description), tags: normalizeTags(fm.tags), fields, body }
+    },
+    serialize(e) {
+      const f = e.fields
+      const obj = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) && Object.keys(v as object).length ? v : undefined)
+      return serializeDoc(
+        [
+          ["name", e.name],
+          ["title", e.title !== e.name ? e.title : ""],
+          ["description", e.description],
+          ["mode", str(f.mode) || "primary"],
+          ["role", str(f.role)],
+          ["model", str(f.model)],
+          ["temperature", typeof f.temperature === "number" ? f.temperature : undefined],
+          ["steps", typeof f.steps === "number" ? f.steps : undefined],
+          ["color", str(f.color)],
+          ["tools", obj(f.tools)],
+          ["permission", obj(f.permission)],
+          ["imported_from", str(f.imported_from)],
+          ["tags", e.tags],
+          ...commonOut(f),
+        ],
+        e.body,
+      )
+    },
+    searchFields(e) {
+      return [[4, e.name.replace(/-/g, " ")], [3, e.title], [2, e.description], [2, `${str(e.fields.role)} ${e.tags.join(" ")}`], [1, e.body]]
     },
   },
 }

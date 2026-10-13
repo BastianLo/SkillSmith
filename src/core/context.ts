@@ -31,6 +31,8 @@ import type { SessionHistory } from "./session-history"
 import type { OccurrenceStore, SessionStore, UsageStore } from "./state"
 import type { Store } from "./store"
 import type { Workshop } from "./toolsmith"
+import type { Settings } from "./settings"
+import type { JobScheduler } from "./jobs"
 
 /** Everything a plugin instance (one per opencode project directory) works with. */
 export interface Ctx {
@@ -88,6 +90,10 @@ export interface Ctx {
   /** review queue and curator of this instance (web actions "review now", "curate") */
   queue?: ReviewQueue
   curator?: Curator
+  /** settings page: overrides in settings.json, applied in place */
+  settings?: Settings
+  /** recurring jobs (one scheduler per store and process, shared by all instances) */
+  jobs?: JobScheduler
   client: Client
   directory: string
   worktree: string

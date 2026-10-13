@@ -25,7 +25,7 @@ Alle Smiths arbeiten nach demselben Prinzip: Kandidaten (Wiederholungsnachweis),
 
 Steht in LiteLLM ein Embedding-Modell bereit (z. B. Qwen3-Embedding-8B), sucht skillsmith zusätzlich **nach Bedeutung** – automatisch, ohne Konfiguration (siehe [Semantische Suche](#semantische-suche-embeddings)). Ohne Embeddings funktioniert alles weiter mit Volltextsuche (BM25).
 
-Getestet mit **opencode 1.18.19 und 1.18.35** (macOS/Linux). Version 3.0. opencode v2 wird noch nicht unterstützt.
+Getestet mit **opencode 1.18.19 und 1.18.35** (macOS/Linux). Version 4.0.0-beta.1 (Phase 5, Teil 1: Einstellungen, Log, Jobs, Eingang, Workflow je Spalte). opencode v2 wird noch nicht unterstützt.
 
 ---
 
@@ -240,7 +240,7 @@ Konflikt selbst entscheiden: `/smith-doctor resolve <id> a|b|beide|kein-bezug` (
 
 `/smith-web` startet die Weboberfläche und gibt einen Link aus (nur `127.0.0.1`, mit Zugangsschlüssel im Link). Sie läuft, solange opencode läuft (`/smith-web stop` beendet sie vorher, `"web": { "autostart": true }` startet sie mit opencode); mehrere opencode-Fenster teilen sich eine Instanz. Alle Bibliotheken (d3-force, CodeMirror 6, uPlot, Mermaid, highlight.js – MIT, BSD bzw. ISC) liegen dem Plugin bei; es wird nichts aus dem Internet geladen.
 
-Links ist die Navigation in fünf Bereichen; **Strg+K** öffnet die Befehlspalette (jede Ansicht, jeder Eintrag, jede Aktion), **n** eine Schnellnotiz, **/** die Suche, **g i / g b / g g / g s** springen zu Eingang, Board, Graph, Statistik.
+Links ist die Navigation nach **Bereichen** (Start, Aufgaben, Wissen, Bibliothek, Qualität, Einblick, System) – jeder Bereich lässt sich einklappen, oben auf der Seite stehen die Tabs des Bereichs. **Strg+K** öffnet die Befehlspalette (jede Ansicht, jeder Eintrag, jede Aktion), **n** eine Schnellnotiz, **/** die Suche, **g i / g b / g g / g s** springen zu Eingang, Board, Graph, Statistik.
 
 ### Wissensbasis (Dokumente)
 
@@ -269,16 +269,34 @@ Links ist die Navigation in fünf Bereichen; **Strg+K** öffnet die Befehlspalet
 
   Kommt eine Karte nach „test“, laufen die Stufen der Reihe nach in Ihrer Login-Shell (mit `JAVA_HOME`, `~/.m2` …), nach der ersten roten wird abgebrochen. Die Karte zeigt Haken, Kreuz oder „läuft“ und die Stufen; JUnit-Berichte (Surefire, Failsafe, Gradle, Jest) werden ausgewertet; das Log ist live mitlesbar und geschwärzt. Höchstens ein Lauf je Projekt und `pipeline.maxParallel` insgesamt. Pipeline-Befehle ändern braucht immer den Zugangsschlüssel und zeigt vorher die Änderung (`pipeline.requireToken`). `source: "branch"` prüft einen sauberen Checkout des Branches in einem eigenen Worktree; `pipeline.sandbox: true` nutzt auf macOS `sandbox-exec`.
 
-### Aufgaben an Agenten übergeben
+### Aufgaben an Agenten übergeben – Workflow je Spalte
 
-1. **Übergeben** (in der Aufgabe): Agent (alle primären Agenten aus opencode, z. B. Ihr orchestrator), Modell (Auswahl aus den Modellen von opencode; leer = Modell des Agenten, sonst das zuletzt genutzte – geprüft, bevor eine Session startet), Arbeitsort (eigener git-Worktree aus dem `home_path`, Standard, oder direkt der `home_path`), zusätzliche Anweisungen. Beschreibung, Unteraufgaben, verlinkte Dokumente, Skills und Erinnerungen, Vorgaben des Projekts und „So wurde Ähnliches gelöst“ werden zum Auftrag; Sie sehen ihn vorher.
-2. **Vorschlag:** Der Agent liest und plant – Schreibwerkzeuge (und bash) sind gesperrt, für ihn und **jeden Subagenten**, erzwungen im Plugin-Hook (geblockte Versuche stehen im Audit-Log). Ihre eigenen opencode-Berechtigungen bleiben dabei unverändert. Ergebnis: Ansatz, Dateien, Schritte, Risiken, offene Fragen, Tests.
-3. **Freigabe** (mit Antworten auf die Fragen) oder **überarbeiten lassen** (mit Begründung – sie wird zum Kandidaten für eine Vorgabe, die künftige Agenten von Anfang an bekommen).
-4. **Umsetzung** in derselben Session; Rückfragen von opencode (Berechtigungen) beantworten Sie in der Weboberfläche oder im Terminal.
-5. **Prüfung:** Pipeline im Worktree – ist sie rot, bessert der Agent einmal selbst nach (`tasks.autoFixRounds`) –, dann ein **Review** durch eine nur lesende Session plus feste Prüfungen (Dateien außerhalb des Vorschlags, Geheimnisse im Diff, große Löschungen, neue TODOs). Die Karte kommt nach „test“; der Diff-Viewer zeigt die Befunde an den Zeilen.
-6. **Abnehmen** setzen nur Sie: Branch mergen, als Pull Request vorbereiten, behalten oder verwerfen. „Nachbessern“ schickt Ihren Hinweis in dieselbe Session.
+Das Board hat in Version 4 die Spalten **neu · planung · umsetzung · test · verifikation · erledigt** (alte Boards werden beim Start umgestellt: eingeplant → planung, in_umsetzung → umsetzung, review → verifikation). Jede Spalte kann einen **Schritt mit eigenem Agenten** haben; die Karte wandert von selbst weiter:
 
-Die Live-Ansicht zeigt den Baum aus Agent und Subagenten mit Status, laufendem Werkzeug, Tokens und Kosten, jede Session mit Nachrichten, Werkzeugaufrufen und Todos, und eine Zeitleiste. Benachrichtigungen (fertiger Vorschlag, Rückfrage, Pipeline, Fehler) kommen als Toast in opencode, im Browser und auf Wunsch als macOS-Mitteilung (`notify.*`). Vorschläge für eingeplante, einem Agenten zugewiesene Aufgaben können vorab entstehen (beim Start von opencode oder zu `tasks.prepareAt`), weil die Vorschlagsphase nichts ändert. Agenten-Aufträge laufen nur, solange opencode läuft.
+| Spalte | Schritt | Agent darf | geht weiter, wenn … | bei Fehler |
+|---|---|---|---|---|
+| planung | Plan, Akzeptanzkriterien, Testfälle | nur lesen (auch Subagenten) | Sie den Plan freigeben (**Tor 1**) | – |
+| umsetzung | Code ändern | schreiben (nur diese Session) | die Pipeline grün ist (rot → bis `tasks.autoFixRounds` selbst nachbessern) | zurück in die Umsetzung |
+| test | Testfälle ausführen: *Befehl* (Pipeline-Lauf), *Test-Agent* (frische Session ohne Schreibrechte), *von Hand* (Sie tragen das Ergebnis ein) | Befehle, kein Schreiben | alle Testfälle bestanden | zurück in die Umsetzung |
+| verifikation | jedes Kriterium mit Beleg aus Diff und Testprotokoll prüfen, Review | nur lesen | alle Kriterien erfüllt – dann wartet die Karte auf **Ihre Abnahme (Tor 2)** | zurück in die Umsetzung |
+
+- **Kriterien und Testfälle** sind Felder der Aufgabe (Tab „Kriterien & Tests“, versioniert): der Planer schlägt sie vor, Sie bearbeiten und bestätigen sie bei der Freigabe oder jederzeit in der Aufgabe. Dort tragen Sie Ergebnisse von Hand ein oder starten die Befehls-Tests.
+- Nach **`tasks.maxLoops`** Rücksprüngen (Standard 3) **hält der Auftrag an** (Eingang, Benachrichtigung): eine weitere Runde mit Ihrem Hinweis, nachbessern, trotzdem abnehmen oder verwerfen.
+- **Agent je Spalte** und die Regeln stellen Sie in den Einstellungen (`tasks.flow`) oder je Projekt („Projekt bearbeiten → Workflow“) ein: Schritt, Agent, Prüfungen (Pipeline, Testfälle, Kriterien, Review), Tor, Folgespalte, Rücksprungspalte. Planung und Umsetzung desselben Agenten laufen in einer Session (Kontext bleibt), Test und Verifikation schauen mit frischen Augen.
+- **Karte ziehen startet den Schritt** der Zielspalte (`tasks.autoStart`, braucht den Zugangsschlüssel); „erledigt“ setzen und mergen nur Sie.
+- **Agenten verwalten** (Aufgaben → Agenten): Agenten sind Einträge im Store mit Versionen und Diff. „Aus opencode übernehmen“ legt Ihre bestehenden Agenten als erste Version an; skillsmith trägt sie beim Start in opencode ein (wirkt nach einem Neustart). Der Job **„Agenten verbessern“** wertet Rücksprünge, Überarbeitungen, Befunde und Ihre Korrekturen aus und schlägt Prompt-Änderungen als Diff mit Begründung vor – übernommen wird nur, was Sie freigeben. Die Auswertung zeigt je Agent **und Version**: Plan beim ersten Mal frei, Rücksprünge, angehalten, Pipeline beim ersten Mal grün, Kosten.
+
+Die Live-Ansicht des Auftrags zeigt die Spalten mit Position und Rücksprüngen, den Verlauf der Schritte, den Baum aus Agent und Subagenten mit Status, Tokens und Kosten, jede Session mit Nachrichten und Werkzeugaufrufen, die Testdurchführung und den Verifikationsbericht. Rückfragen von opencode beantworten Sie in der Weboberfläche oder im Terminal. Agenten-Aufträge laufen nur, solange opencode läuft.
+
+### Einstellungen, Log und Jobs
+
+- **Einstellungen** (System → Einstellungen): jede Option als Formular, gruppiert, mit Beschreibung, Standardwert und **Quelle** (Standard, opencode.json, Einstellungen, Umgebung). Was Sie hier speichern, liegt versioniert in `settings.json` im Store und gewinnt über opencode.json (Umgebungsvariablen gewinnen über alles). Sicherheitsrelevante Werte (Token, Lese-Sperre, Pipeline …) brauchen eine Bestätigung und den Zugangsschlüssel; Werte, die einen Neustart brauchen, sind markiert.
+- **Log** (Einblick → Log): strukturiert (`state/log/JJJJ-MM-TT.jsonl`), filterbar nach Stufe, Bereich, Lauf, Job, Session; live mitlesen, nach Lauf gruppieren. Stufe je Bereich einstellbar (`log.level`, `log.areas`), Aufbewahrung `log.days`/`log.maxMB`.
+- **Jobs** (System → Jobs): alles, was im Hintergrund regelmäßig läuft (Lebenszyklus, Konsolidierung, Skript-Retests, Doktor, Embeddings, Vorab-Pläne, Agenten verbessern, Aufräumen) mit Zeitplan (Uhrzeit, Wochentage, Intervall, bei Leerlauf, Cron, nach Reviews), Verlauf mit Log-Link, von Hand starten, pausieren, abbrechen. Verpasste Läufe werden einmal nachgeholt (`catchUp`).
+
+### Eingang: Meldungen abstellen
+
+Jede Meldungsart im Eingang lässt sich **direkt im Eingang** einstellen (Menü an der Gruppe oder „Einstellen“): **anzeigen**, **bündeln** (eine Zeile je Gruppe, Standard für KI-Änderungen) oder **ausblenden**; KI-Änderungen auch je Smith. Einzelne Meldungen lassen sich wegklicken – sie kommen erst wieder, wenn sich der Inhalt ändert. Im selben Dialog stellen Sie die Benachrichtigungen (Toast, Browser, macOS) je Ereignis ein. Der Zähler in der Navigation zählt gebündelte Gruppen einmal.
 
 ### Einblick
 

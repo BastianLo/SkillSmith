@@ -292,8 +292,8 @@ export class Ops {
     const nameErr = validateName(c.name)
     if (nameErr) throw new GuardError(nameErr)
     const warnings: string[] = []
-    if (kind === "task" || kind === "project" || (kind === "knowledge" && user)) {
-      // the user's documents, tasks and projects: free form, longer, still checked for secrets
+    if (kind === "task" || kind === "project" || kind === "agent" || (kind === "knowledge" && user)) {
+      // the user's documents, tasks, projects and agent prompts: free form, longer, still checked for secrets
       const t = c.title.trim()
       if (!t || /\n/.test(t) || t.length > 160) throw new GuardError("title must be a single line of 1–160 characters")
       if (/\n/.test(c.description) || c.description.length > o.maxDescriptionChars) throw new GuardError(`description must be a single line of at most ${o.maxDescriptionChars} characters`)

@@ -1,9 +1,11 @@
 /** Board, task, project and pipeline actions (step 4e). */
-import { oneLine, slugify, truncate } from "../../util/text"
+import { errorMessage, oneLine, slugify, truncate } from "../../util/text"
 import { str } from "../frontmatter"
 import { taskId, TASK_PRIORITIES } from "../kinds"
 import { GuardError } from "../ops"
 import { expandPath, normalizePipeline } from "../projects"
+import { normalizeFlow } from "../workflow"
+import { criteriaOf, planOf, testcasesOf } from "../task-fields"
 import { versionOf } from "./index"
 import type { ActionDef } from "./types"
 import { defineAction } from "./types"
@@ -56,10 +58,68 @@ export const TASK_ACTIONS: ActionDef[] = [
     label: "Spalte wechseln",
     area: "aufgabe",
     smith: "memorysmith",
+    // moving into a column with an agent step may start the agent
+    strongToken: ({ ctx }, a) => {
+      const e = ctx.tasks.get(String(a.target ?? ""))
+      const project = e ? str(e.fields.project) || undefined : undefined
+      return ctx.options.tasks.autoStart && ctx.agentTasks.flows(project)[a.to]?.step ? "tasks" : undefined
+    },
     args: { target: { t: "id" }, to: { t: "string", max: 40 }, position: { t: "number", int: true, min: 0, optional: true }, force: { t: "boolean", optional: true } },
     async run({ ctx }, run, a) {
+      const from = str(requireEntry(ctx, a.target).fields.status)
       const r = await ctx.tasks.move(run, name(a.target), a.to, { force: a.force, position: a.position })
-      return { message: `${str(r.entry.fields.id)} → ${a.to}`, target: a.target, warnings: r.warnings }
+      // a column with an agent step: a waiting job follows, an idle task starts its agent (tasks.autoStart)
+      const after = from !== a.to ? () => ctx.agentTasks.onCardMoved(r.entry.name, a.to) : undefined
+      return { message: `${str(r.entry.fields.id)} → ${a.to}`, target: a.target, warnings: r.warnings, after }
+    },
+  }),
+  defineAction({
+    name: "task.fields",
+    label: "Kriterien, Testfälle, Plan bearbeiten",
+    area: "aufgabe",
+    smith: "memorysmith",
+    args: { target: { t: "id" }, criteria: { t: "array", max: 40, optional: true }, testcases: { t: "array", max: 40, optional: true }, plan: { t: "object", optional: true } },
+    version: ({ ctx }, a) => versionOf(ctx, a.target),
+    async run({ ctx }, run, a) {
+      const e = requireEntry(ctx, a.target)
+      if (e.kind !== "task") throw new GuardError("Nur Aufgaben haben Kriterien und Testfälle")
+      const fields: Record<string, unknown> = { ...e.fields }
+      // written by the user: criteria count as confirmed
+      if (a.criteria) fields.criteria = criteriaOf(a.criteria).map((c) => ({ ...c, confirmed: true }))
+      if (a.testcases) fields.testcases = testcasesOf(a.testcases)
+      if (a.plan) fields.plan = planOf(a.plan) ?? ""
+      await ctx.ops.update(run, "task", { name: e.name, fields, reason: [a.criteria ? "Akzeptanzkriterien" : "", a.testcases ? "Testfälle" : "", a.plan ? "Plan" : ""].filter(Boolean).join(", ") + " bearbeitet", approved: true })
+      ctx.bus.emit("task.changed", { task: e.name, action: "fields" })
+      return { message: `${str(e.fields.id)} gespeichert`, target: a.target }
+    },
+  }),
+  defineAction({
+    name: "task.testResult",
+    label: "Testfall-Ergebnis eintragen",
+    area: "aufgabe",
+    smith: "memorysmith",
+    args: { target: { t: "id" }, case: { t: "string", max: 12 }, result: { t: "enum", values: ["bestanden", "fehlgeschlagen", "offen"] }, protocol: { t: "string", multiline: true, max: 4000, optional: true } },
+    async run({ ctx }, run, a) {
+      const e = requireEntry(ctx, a.target)
+      await ctx.agentTasks.testResult(run, e.name, a.case, a.result, a.protocol)
+      return { message: `${a.case}: ${a.result}`, target: a.target }
+    },
+  }),
+  defineAction({
+    name: "task.runTests",
+    label: "Befehls-Testfälle jetzt ausführen",
+    area: "aufgabe",
+    smith: "memorysmith",
+    local: true,
+    strongToken: "pipeline",
+    args: { target: { t: "id" } },
+    async run({ ctx, actor }, _run, a) {
+      const e = requireEntry(ctx, a.target)
+      if (e.kind !== "task") throw new GuardError("Nur Aufgaben haben Testfälle")
+      // results are written in their own run when the pipeline run is done (task.changed)
+      const r = await ctx.agentTasks.runTestsForUser(e.name, actor === "web" ? "user-web" : "user-command")
+      const queued = ctx.pipeline.runs(str(e.fields.project), 1)[0]
+      return { message: `${r.count} Testfall/Testfälle gestartet – die Ergebnisse erscheinen in der Aufgabe`, open: queued ? `#/pipeline/${str(e.fields.project)}/${queued.id}` : undefined }
     },
   }),
   defineAction({
@@ -156,6 +216,7 @@ export const TASK_ACTIONS: ActionDef[] = [
       columns: { t: "list", max: 12, item: 31, optional: true },
       wip: { t: "object", optional: true },
       pipeline: { t: "object", optional: true },
+      flow: { t: "object", optional: true },
       aliases: { t: "list", max: 10, item: 60, optional: true },
       body: { t: "string", multiline: true, max: 200_000, optional: true },
     },
@@ -182,6 +243,12 @@ export const TASK_ACTIONS: ActionDef[] = [
       const columns = a.columns?.length ? a.columns : undefined
       if (columns) for (const c of columns) if (!/^[a-z][a-z0-9_]{0,30}$/.test(c)) throw new GuardError(`Spalten-Id „${c}“ ungültig (a-z, 0-9, _)`)
       const pipeline = normalizePipeline(a.pipeline, columns ?? ctx.options.tasks.columns)
+      let flow: Record<string, unknown> | undefined
+      try {
+        flow = normalizeFlow(a.flow, columns ?? ctx.options.tasks.columns)
+      } catch (err) {
+        throw new GuardError(errorMessage(err))
+      }
       const wip: Record<string, number> = {}
       for (const [k, v] of Object.entries((a.wip as Record<string, unknown>) ?? {})) if (Number(v) > 0) wip[k] = Math.round(Number(v))
       const fields = {
@@ -192,6 +259,7 @@ export const TASK_ACTIONS: ActionDef[] = [
         columns: columns ?? [],
         wip,
         pipeline: pipeline ?? "",
+        flow: flow ?? "",
         aliases: a.aliases ?? [],
         author: "user",
         ai: "lesen",

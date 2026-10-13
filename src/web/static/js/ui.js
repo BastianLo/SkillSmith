@@ -64,6 +64,13 @@ export function announce(text) {
 // ---------------------------------------------------------------------------
 // dialogs
 // ---------------------------------------------------------------------------
+const openModals = new Set()
+
+/** Close every open dialog (the router calls this when the page changes). */
+export function closeModals() {
+  for (const close of [...openModals]) close(undefined)
+}
+
 /** Generic modal. `build(close)` returns {title, body, foot, wide}. Resolves with the value given to close(). */
 export function modal(build) {
   return new Promise((resolve) => {
@@ -73,11 +80,13 @@ export function modal(build) {
     const close = (v) => {
       if (done) return
       done = true
+      openModals.delete(close)
       overlay.remove()
       document.removeEventListener("keydown", onKey, true)
       if (prev && prev.focus) prev.focus()
       resolve(v)
     }
+    openModals.add(close)
     const spec = build(close)
     const dialog = h(
       "div",

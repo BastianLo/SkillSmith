@@ -7,7 +7,7 @@
 import { execFile } from "node:child_process"
 import type { Ctx } from "./context"
 
-export type NotifyEvent = "proposal" | "permission" | "pipeline" | "agent-done" | "agent-error" | "inbox"
+export type NotifyEvent = "proposal" | "permission" | "pipeline" | "agent-done" | "agent-error" | "job-failed" | "halted" | "inbox"
 
 export function notify(
   ctx: Ctx,

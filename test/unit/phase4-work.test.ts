@@ -8,7 +8,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { executeAction } from "../../src/core/actions"
 import { agentHub, checkTool } from "../../src/core/agent-hub"
-import { parseProposal } from "../../src/core/agent-tasks"
+import { parseProposal, upgradeJob } from "../../src/core/agent-tasks"
+import { migrateTaskColumns } from "../../src/core/tasks"
 import { finalizeRun } from "../../src/core/finalize"
 import { BODY, cmdRun, makeCtx, makeRun, tmp } from "./helpers"
 import { createTools } from "../../src/host/tools"
@@ -35,7 +36,7 @@ async function waitFor(fn: () => boolean | Promise<boolean>, ms = 15_000): Promi
 
 describe("tasks and board", () => {
   test("ids across projects, columns, WIP limit, subtasks with depth, done with open subtasks needs confirmation", async () => {
-    const ctx = makeCtx({ tasks: { wipLimits: { in_umsetzung: 1 } } })
+    const ctx = makeCtx({ tasks: { wipLimits: { umsetzung: 1 } } })
     await web(ctx, "project.save", { title: "Shop", name: "shop" })
     const a = await web(ctx, "task.create", { title: "Logout absichern", project: "shop", priority: "hoch", labels: ["auth"] })
     const b = await web(ctx, "task.create", { title: "Zweite Aufgabe", project: "shop" })
@@ -44,14 +45,14 @@ describe("tasks and board", () => {
     const sub = await web(ctx, "task.subtask", { target: "task:t-1", title: "Test schreiben" })
     expect(ctx.tasks.require("t-3").fields.parent).toBe("T-1")
     await expect(web(ctx, "task.subtask", { target: "task:t-3", title: "zu tief" })).rejects.toMatchObject({ status: 422 })
-    await web(ctx, "task.move", { target: "task:t-1", to: "in_umsetzung" })
-    await expect(web(ctx, "task.move", { target: "task:t-2", to: "in_umsetzung" })).rejects.toMatchObject({ status: 428 })
-    const forced = await web(ctx, "task.move", { target: "task:t-2", to: "in_umsetzung", force: true })
+    await web(ctx, "task.move", { target: "task:t-1", to: "umsetzung" })
+    await expect(web(ctx, "task.move", { target: "task:t-2", to: "umsetzung" })).rejects.toMatchObject({ status: 428 })
+    const forced = await web(ctx, "task.move", { target: "task:t-2", to: "umsetzung", force: true })
     expect(forced.warnings?.[0]).toContain("WIP-Limit")
     await expect(web(ctx, "task.move", { target: "task:t-1", to: "erledigt" })).rejects.toMatchObject({ status: 428 })
     await web(ctx, "task.move", { target: "task:t-1", to: "erledigt", force: true })
     const board = (await ctx.web!.api("board", new URLSearchParams({ project: "shop" }))) as any
-    expect(board.columns).toEqual(["neu", "eingeplant", "in_umsetzung", "test", "erledigt"])
+    expect(board.columns).toEqual(["neu", "planung", "umsetzung", "test", "verifikation", "erledigt"])
     const t1 = board.tasks.find((t: any) => t.id === "T-1")
     expect(t1.progress).toEqual({ done: 0, total: 1 })
     expect(t1.labels).toEqual(["auth"])
@@ -81,7 +82,7 @@ describe("tasks and board", () => {
     expect(s.fields.status).toBe("neu")
     await web(ctx, "task.acceptSuggestion", { target: `task:${s.name}` })
     const acc = ctx.tasks.require(s.name)
-    expect(acc.fields.status).toBe("eingeplant")
+    expect(acc.fields.status).toBe("planung")
     expect(acc.fields.suggested).toBeUndefined()
     const { handleCommand } = await import("../../src/host/commands")
     const out = await handleCommand(ctx, { queue: {} as any, curator: {} as any }, "task", "neu Neue Karte aus opencode", "ses_1")
@@ -210,9 +211,12 @@ function fakeClient() {
         s.status = "busy"
         setTimeout(async () => {
           const dir = query?.directory ?? s.directory
-          if (/^Du prüfst die Umsetzung/.test(text)) return reply(s, 'Passt.\n```json\n[{"file": "impl.txt", "line": 1, "severity": "info", "text": "ok"}]\n```')
-          if (/PHASE 1|überarbeitet haben/.test(text)) {
-            // a subagent tries to write during the proposal → the guard rejects it
+          const custom = (client as any).answer?.(text, s, dir)
+          if (custom !== undefined) return reply(s, custom)
+          if (/^Du verifizierst die Umsetzung/.test(text)) return reply(s, 'Passt.\n```json\n{"verdicts": [{"criterion": "K1", "verdict": "erfuellt", "evidence": "impl.txt ist im Diff"}], "findings": [{"file": "impl.txt", "line": 1, "severity": "info", "text": "ok"}], "summary": "erfüllt"}\n```')
+          if (/SCHRITT TEST/.test(text)) return reply(s, 'Getestet.\n```json\n[{"id": "TF2", "result": "bestanden", "protocol": "Inhalt gelesen: umgesetzt"}]\n```')
+          if (/SCHRITT PLANUNG|überarbeitet haben/.test(text)) {
+            // a subagent tries to write during the planning → the guard rejects it
             const child = `ses_${++n}`
             sessions.set(child, { id: child, directory: dir, parentID: s.id, title: "explore", status: "idle", messages: [] })
             agentHub().parents.set(child, s.id)
@@ -222,9 +226,9 @@ function fakeClient() {
             } catch (err) {
               ;(client as any).guardResult = String(err)
             }
-            return reply(s, 'Plan:\n```json\n{"approach": "Datei impl.txt anlegen", "files": ["impl.txt"], "steps": ["anlegen"], "risks": [], "questions": ["Inhalt?"], "tests": ["verify"]}\n```')
+            return reply(s, 'Plan:\n```json\n{"approach": "Datei impl.txt anlegen", "files": ["impl.txt"], "steps": ["anlegen", "prüfen"], "risks": [], "questions": ["Inhalt?"], "criteria": ["impl.txt existiert"], "testcases": [{"title": "Datei da", "mode": "befehl", "command": "test -f impl.txt", "expected": "Exit 0"}, {"title": "Inhalt prüfen", "mode": "agent", "steps": ["impl.txt lesen"], "expected": "umgesetzt"}]}\n```')
           }
-          if (/PHASE 2/.test(text)) {
+          if (/SCHRITT UMSETZUNG/.test(text)) {
             writeFileSync(join(dir, "impl.txt"), "umgesetzt\n")
             return reply(s, "Umgesetzt: impl.txt angelegt.")
           }
@@ -249,8 +253,16 @@ function fakeClient() {
   return { client, prompts, sessions }
 }
 
-describe("agent tasks", () => {
-  test("proposal (write guard over the session tree) → approval → implementation → pipeline with one fix round → review → merge", async () => {
+async function until(ctx: ReturnType<typeof makeCtx>, jobId: string, pred: (j: any) => boolean, ms = 30_000): Promise<any> {
+  await waitFor(async () => {
+    await ctx.agentTasks.tick()
+    return pred(ctx.agentTasks.get(jobId)!)
+  }, ms)
+  return ctx.agentTasks.get(jobId)!
+}
+
+describe("agent tasks (workflow per column)", () => {
+  test("planning (guard) → gate 1 with edited criteria → implementation + pipeline fix round → test cases → verification → gate 2 → merge", async () => {
     const home = gitRepo()
     const fake = fakeClient()
     const ctx = makeCtx({ tasks: { autoFixRounds: 1 } }, fake.client)
@@ -264,43 +276,45 @@ describe("agent tasks", () => {
     const job0 = ctx.agentTasks.get(jobId)!
     expect(existsSync(job0.workdir)).toBe(true)
     expect(job0.branch).toMatch(/^skillsmith\/t-1-/)
-    // no `tools` on the main session (opencode would keep them as session permissions) – the guard enforces the phase
+    // the card moved from „neu“ into the planning column; no `tools` on the session (the guard enforces the step)
+    expect(ctx.tasks.require("t-1").fields.status).toBe("planung")
+    expect(job0).toMatchObject({ column: "planung", step: "plan", phase: "working" })
     expect(fake.prompts[0].tools).toBeUndefined()
-    await waitFor(async () => {
-      await ctx.agentTasks.tick()
-      return ctx.agentTasks.get(jobId)!.phase === "awaiting_approval"
-    })
+    let j = await until(ctx, jobId, (x) => x.phase === "waiting")
+    expect(j.waitingFor).toBe("plan")
     expect((fake.client as any).guardResult).toContain("gesperrt")
     expect(ctx.audit!.query({ category: ["rejected"] }).events[0]).toMatchObject({ actor: "agent", action: "edit" })
-    const job1 = ctx.agentTasks.get(jobId)!
-    expect(job1.proposals[0]).toMatchObject({ approach: "Datei impl.txt anlegen", files: ["impl.txt"], questions: ["Inhalt?"] })
-    expect(ctx.tasks.view(ctx.tasks.require("t-1")).agentStatus?.label).toBe("wartet auf Freigabe")
-    // revise once (the reason becomes a rule candidate), then approve
+    expect(j.proposals[0]).toMatchObject({ approach: "Datei impl.txt anlegen", files: ["impl.txt"], questions: ["Inhalt?"] })
+    expect(j.proposals[0].criteria).toEqual([{ id: "K1", text: "impl.txt existiert", status: "offen" }])
+    expect(j.proposals[0].testcases.map((t: any) => [t.id, t.mode])).toEqual([["TF1", "befehl"], ["TF2", "agent"]])
+    expect(ctx.tasks.view(ctx.tasks.require("t-1")).agentStatus?.label).toBe("wartet auf Freigabe des Plans")
+    // revise once (the reason becomes a rule candidate), then approve with an edited criterion
     await web(ctx, "agent.revise", { job: jobId, comments: "Bitte immer zuerst die Tests schreiben, dann den Code." })
     expect(ctx.agentTasks.rules()[0].text).toContain("zuerst die Tests")
-    await waitFor(async () => {
-      await ctx.agentTasks.tick()
-      return ctx.agentTasks.get(jobId)!.phase === "awaiting_approval"
-    })
-    await web(ctx, "agent.approve", { job: jobId, answers: "Inhalt egal" })
+    j = await until(ctx, jobId, (x) => x.phase === "waiting" && x.proposals.length === 2)
+    await web(ctx, "agent.approve", { job: jobId, answers: "Inhalt egal", criteria: [{ id: "K1", text: "impl.txt existiert mit Inhalt" }], testcases: j.proposals[1].testcases })
     const task = ctx.tasks.require("t-1")
-    expect(task.fields.status).toBe("in_umsetzung")
-    expect(task.body).toContain("<!-- vorschlag:start -->")
-    expect(fake.prompts.at(-1)!.tools).toBeUndefined()
-    await waitFor(async () => {
-      await ctx.agentTasks.tick()
-      return ctx.agentTasks.get(jobId)!.phase === "in_test"
-    }, 30_000)
-    const done = ctx.agentTasks.get(jobId)!
-    expect(done.fixRounds).toBe(1)
-    expect(done.pipelineFirstGreen).toBe(false)
-    expect(done.pipelineRuns).toHaveLength(2)
-    expect(ctx.tasks.require("t-1").fields.status).toBe("test")
-    expect(done.review!.findings.some((f) => f.source === "ai")).toBe(true)
-    expect(fake.prompts.find((p) => p.text.startsWith("Du prüfst die Umsetzung"))!.tools).toMatchObject({ write: false, edit: false, bash: false })
-    expect(done.diffStat!.files).toBe(2)
-    const diff = await ctx.agentTasks.diff(jobId)
-    expect(diff.map((f) => f.path).sort()).toEqual(["fixed.txt", "impl.txt"])
+    expect(task.fields.status).toBe("umsetzung")
+    expect(task.fields.criteria).toEqual([{ id: "K1", text: "impl.txt existiert mit Inhalt", status: "offen", confirmed: true }])
+    expect((task.fields.plan as any).answers).toBe("Inhalt egal")
+    expect(task.body).toContain("<!-- aufgaben:start -->\n## Aufgaben\n- [ ] anlegen\n- [ ] prüfen")
+    // implementation continues the planner's session (same agent)
+    expect(fake.prompts.at(-1)!.id).toBe(job0.session)
+    expect(fake.prompts.at(-1)!.text).toContain("SCHRITT UMSETZUNG")
+    j = await until(ctx, jobId, (x) => x.phase === "waiting" || x.phase === "error" || x.phase === "halted", 40_000)
+    expect(j).toMatchObject({ phase: "waiting", waitingFor: "accept", column: "verifikation", loops: 0, fixRounds: 1, pipelineFirstGreen: false })
+    expect(j.pipelineRuns).toHaveLength(2)
+    // test cases: TF1 by command (pipeline run), TF2 by the test agent; results are in the task
+    const tcs = ctx.tasks.require("t-1").fields.testcases as any[]
+    expect(tcs.map((t) => [t.id, t.last?.result, t.last?.by])).toEqual([["TF1", "bestanden", "befehl"], ["TF2", "bestanden", "agent"]])
+    // verification: verdict per criterion in the task, findings at the job, read-only session with `tools` off
+    const vt = ctx.tasks.require("t-1").fields
+    expect((vt.criteria as any[])[0]).toMatchObject({ status: "erfuellt", evidence: "impl.txt ist im Diff" })
+    expect(vt.verification).toMatchObject({ ok: true, verdicts: [{ criterion: "K1", verdict: "erfuellt" }] })
+    expect(fake.prompts.find((p) => p.text.startsWith("Du verifizierst die Umsetzung"))!.tools).toMatchObject({ write: false, edit: false, bash: false })
+    expect(j.review.findings.some((f: any) => f.source === "ai")).toBe(true)
+    expect(j.stepRuns.map((r: any) => `${r.column}:${r.result}`)).toEqual(["planung:ok", "planung:ok", "umsetzung:ok", "test:ok", "verifikation:ok"])
+    expect(j.diffStat.files).toBe(2)
     // the agent never sets done; the user accepts and merges
     const acc = await web(ctx, "agent.accept", { job: jobId, mode: "merge" })
     expect(acc.message).toContain("gemergt")
@@ -310,7 +324,47 @@ describe("agent tasks", () => {
     await web(ctx, "rule.decide", { id: ctx.agentTasks.rules()[0].id, decision: "confirm" })
     expect(ctx.store.list("memory").some((m) => m.fields.type === "vorgabe")).toBe(true)
     const stats = ctx.agentTasks.stats(30)
-    expect(stats[0]).toMatchObject({ agent: "build", jobs: 1, revisions: 1, fixRounds: 1, withPipeline: 1, firstGreen: 0 })
+    expect(stats[0]).toMatchObject({ agent: "build", version: "opencode", jobs: 1, revisions: 1, fixRounds: 1, withPipeline: 1, firstGreen: 0, loops: 0 })
+  }, 60_000)
+
+  test("a failed criterion sends the card back; after maxLoops it halts; one more round; manual tests wait for the user", async () => {
+    const home = gitRepo()
+    const fake = fakeClient()
+    const ctx = makeCtx({ tasks: { maxLoops: 1 } }, fake.client)
+    let verdict = "nicht_erfuellt"
+    ;(fake.client as any).answer = (text: string) => {
+      if (/^Du verifizierst/.test(text)) return `Nein.\n\`\`\`json\n{"verdicts": [{"criterion": "K1", "verdict": "${verdict}", "evidence": "fehlt"}], "findings": [], "summary": "x"}\n\`\`\``
+      if (/SCHRITT PLANUNG/.test(text)) return 'P\n```json\n{"approach": "a", "steps": [], "criteria": ["K"], "testcases": [{"title": "von Hand", "mode": "manuell", "expected": "sichtbar"}]}\n```'
+      return undefined
+    }
+    await web(ctx, "project.save", { title: "App", name: "app", home_path: home })
+    await web(ctx, "task.create", { title: "Etwas", project: "app" })
+    const jobId = ((await web(ctx, "agent.assign", { target: "task:t-1", agent: "build", workplace: "home" })).data as any).job
+    await until(ctx, jobId, (x) => x.waitingFor === "plan")
+    await web(ctx, "agent.approve", { job: jobId })
+    // the manual test case waits for the user
+    let j = await until(ctx, jobId, (x) => x.waitingFor === "tests")
+    expect(j.column).toBe("test")
+    await web(ctx, "task.testResult", { target: "task:t-1", case: "TF1", result: "bestanden", protocol: "geprüft" })
+    // verification fails → back to the implementation (loop 1), test again
+    j = await until(ctx, jobId, (x) => x.loops === 1 && x.waitingFor === "tests")
+    expect(j.stepRuns.find((r: any) => r.result === "failed").column).toBe("verifikation")
+    expect(fake.prompts.filter((p) => /SCHRITT UMSETZUNG \(Runde 2\)/.test(p.text))).toHaveLength(1)
+    expect(fake.prompts.find((p) => /Runde 2/.test(p.text))!.text).toContain("K1 K: nicht erfüllt – fehlt")
+    await web(ctx, "task.testResult", { target: "task:t-1", case: "TF1", result: "bestanden" })
+    // second failure > maxLoops (1) → halted, inbox and card show it
+    j = await until(ctx, jobId, (x) => x.phase === "halted")
+    expect(j.loops).toBe(2)
+    expect(ctx.tasks.view(ctx.tasks.require("t-1")).agentStatus?.label).toBe("angehalten nach 2 Rücksprüngen")
+    expect(ctx.agentTasks.inboxItems().some((i) => i.type === "agent-halted")).toBe(true)
+    // one more round with a hint; now the verifier is satisfied → acceptance
+    verdict = "erfuellt"
+    await web(ctx, "agent.continue", { job: jobId, text: "Die Datei muss im Wurzelverzeichnis liegen." })
+    j = await until(ctx, jobId, (x) => x.waitingFor === "tests")
+    await web(ctx, "task.testResult", { target: "task:t-1", case: "TF1", result: "bestanden" })
+    j = await until(ctx, jobId, (x) => x.waitingFor === "accept")
+    expect(j.extraLoops).toBe(1)
+    expect(fake.prompts.some((p) => p.text.includes("Hinweis des Nutzers: Die Datei muss im Wurzelverzeichnis liegen."))).toBe(true)
   }, 60_000)
 
   test("model: a bare router combo (agent model „Hermes“) is repaired, every prompt carries it, unknown models are refused", async () => {
@@ -319,18 +373,15 @@ describe("agent tasks", () => {
     const ctx = makeCtx({}, fake.client)
     await web(ctx, "project.save", { title: "App", name: "app", home_path: home })
     await web(ctx, "task.create", { title: "Etwas planen", project: "app" })
-    // the dialog sees the broken agent model and the offered models
     const agents = await ctx.agentTasks.agents()
     expect(agents.find((a) => a.name === "hera")).toMatchObject({ model: "Hermes", modelValid: false, modelFix: "9router/Hermes" })
     expect((await ctx.agentTasks.models()).models).toContain("9router/Athene")
-    // without a chosen model: the agent's „Hermes“ → 9router/Hermes, explicit in the prompt (opencode would fail with "Hermes/.")
     const a = await web(ctx, "agent.assign", { target: "task:t-1", agent: "hera", workplace: "home" })
     const job = ctx.agentTasks.get((a.data as any).job)!
     expect(job.model).toBe("9router/Hermes")
     expect(job.modelNote).toContain("„Hermes“ → 9router/Hermes")
     expect(fake.prompts[0].model).toEqual({ providerID: "9router", modelID: "Hermes" })
     await web(ctx, "agent.abort", { job: job.id }).catch(() => undefined)
-    // a chosen model must exist; a bare name is repaired, a wrong one refused with the offered models
     await web(ctx, "task.create", { title: "Noch etwas", project: "app" })
     const b = await web(ctx, "agent.assign", { target: "task:t-2", agent: "build", model: "athene", workplace: "home" })
     expect(ctx.agentTasks.get((b.data as any).job)!.model).toBe("9router/Athene")
@@ -338,8 +389,57 @@ describe("agent tasks", () => {
     await expect(web(ctx, "agent.assign", { target: "task:t-3", agent: "build", model: "litellm/gibtsnicht", workplace: "home" })).rejects.toThrow(/gibt es in opencode nicht.*9router\/Hermes/)
   }, 30_000)
 
-  test("proposal parsing falls back to markdown sections", () => {
-    expect(parseProposal("## Ansatz\nKurz.\n## Dateien\n- a.ts\n- b.ts\n## Fragen\n1. Warum?")).toMatchObject({ approach: "Kurz.", files: ["a.ts", "b.ts"], questions: ["Warum?"] })
+  test("column agents from the workflow; dragging a card into a step column starts its agent (autoStart)", async () => {
+    const home = gitRepo()
+    const fake = fakeClient()
+    const ctx = makeCtx({ tasks: { flow: { planung: { agent: "orchestrator" } } } }, fake.client)
+    await web(ctx, "project.save", { title: "App", name: "app", home_path: home, agent: "build", flow: { verifikation: { agent: "hera", checks: ["criteria"] } } })
+    const flows = ctx.agentTasks.flows("app")
+    expect(flows.planung).toMatchObject({ step: "plan", agent: "orchestrator", gate: true, onSuccess: "umsetzung" })
+    expect(flows.umsetzung).toMatchObject({ step: "implement", checks: ["pipeline"], onFailure: "umsetzung" })
+    expect(flows.test).toMatchObject({ step: "test", onFailure: "umsetzung" })
+    expect(flows.verifikation).toMatchObject({ step: "verify", agent: "hera", checks: ["criteria"], gate: true, onSuccess: "erledigt" })
+    expect(flows.neu.step).toBeUndefined()
+    await expect(web(ctx, "project.save", { name: "app", title: "App", flow: { gibts: { step: "plan" } } })).rejects.toMatchObject({ status: 422 })
+    await web(ctx, "task.create", { title: "Zieh mich", project: "app" })
+    const moved = await web(ctx, "task.move", { target: "task:t-1", to: "planung" })
+    expect(moved.warnings?.join(" ")).toContain("orchestrator startet")
+    const job = ctx.agentTasks.ofTask("t-1")!
+    expect(job).toMatchObject({ column: "planung", stepAgent: "orchestrator", agent: "orchestrator" })
+    expect(fake.prompts[0].agent).toBe("orchestrator")
+  }, 30_000)
+
+  test("prepared plans only for planned agent tasks that never had a job (no restart after discard)", async () => {
+    const home = gitRepo()
+    const fake = fakeClient()
+    const ctx = makeCtx({}, fake.client)
+    await web(ctx, "project.save", { title: "App", name: "app", home_path: home })
+    await web(ctx, "task.create", { title: "Erster", project: "app" })
+    const a = await web(ctx, "agent.assign", { target: "task:t-1", agent: "build", workplace: "home" })
+    await web(ctx, "agent.discard", { job: (a.data as any).job }, { force: true })
+    // discard moves the card back to the planning column – the agent field stays, but nothing restarts
+    expect(ctx.tasks.require("t-1").fields.status).toBe("planung")
+    expect(await ctx.agentTasks.prepareProposals("test")).toBe(0)
+    await web(ctx, "task.create", { title: "Zweiter", project: "app" })
+    const run = makeRun(ctx, "command", { smith: "memorysmith" })
+    await ctx.ops.update(run, "task", { name: "t-2", fields: { ...ctx.tasks.require("t-2").fields, assignee: "agent", agent: "build", status: "planung" }, reason: "test", approved: true })
+    await finalizeRun(ctx, run, { ok: true })
+    expect(await ctx.agentTasks.prepareProposals("test")).toBe(1)
+    expect(ctx.agentTasks.all().find((j) => j.task === "t-2")?.prepared).toBe(true)
+  }, 30_000)
+
+  test("3.x jobs and task columns are migrated; plan parsing falls back to markdown sections", async () => {
+    expect(parseProposal("## Ansatz\nKurz.\n## Dateien\n- a.ts\n- b.ts\n## Fragen\n1. Warum?\n## Akzeptanzkriterien\n- läuft")).toMatchObject({ approach: "Kurz.", files: ["a.ts", "b.ts"], questions: ["Warum?"], criteria: [{ id: "K1", text: "läuft" }] })
+    expect(upgradeJob({ id: "x", agent: "build", session: "s1", phase: "in_test" })).toMatchObject({ phase: "waiting", waitingFor: "accept", sessionsByAgent: { build: "s1" }, loops: 0 })
+    expect(upgradeJob({ id: "y", agent: "build", session: "s1", reviewSession: "s2", phase: "reviewing" })).toMatchObject({ phase: "working", step: "verify", session: "s2" })
+    const ctx = makeCtx()
+    await web(ctx, "task.create", { title: "Alt" })
+    const run = makeRun(ctx, "command", { smith: "memorysmith" })
+    await ctx.ops.update(run, "task", { name: "t-1", fields: { ...ctx.tasks.require("t-1").fields, status: "in_umsetzung" }, reason: "3.x", approved: true })
+    await finalizeRun(ctx, run, { ok: true })
+    expect(await migrateTaskColumns(ctx)).toBe(1)
+    expect(ctx.tasks.require("t-1").fields.status).toBe("umsetzung")
+    expect(await migrateTaskColumns(ctx)).toBe(0)
   })
 })
 

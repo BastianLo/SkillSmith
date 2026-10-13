@@ -2,7 +2,7 @@ import { get } from "../api.js"
 import { AI_ACCESS, KIND_PLURAL, MEMORY_PLURAL, aiChip, debounce, entryHref, fmtRel, h, icon, kindChip, put, select, statusChip, swap, tagChips } from "../dom.js"
 import { act, app, promptDialog } from "../ui.js"
 
-const NEW_ROUTE = { knowledge: "#/neu/dokument", skill: "#/neu/skill", error: "#/neu/fehler", glossary: "#/neu/glossar", memory: "#/neu/erinnerung", task: "#/board?neu=1", project: "#/projekt-neu", script: "#/werkstatt?neu=1" }
+const NEW_ROUTE = { knowledge: "#/neu/dokument", skill: "#/neu/skill", error: "#/neu/fehler", glossary: "#/neu/glossar", memory: "#/neu/erinnerung", task: "#/board?neu=1", project: "#/projekt-neu", script: "#/werkstatt?neu=1", agent: "#/neu/agent" }
 
 /** One row of an entry list (also used by search and documents). */
 export function entryRow(n, { selectable, selected, onSelect, extra } = {}) {
@@ -121,6 +121,7 @@ export default async function lists(ctx) {
         ],
     filters.tag ? h("span", { class: "chip accent" }, `#${filters.tag}`, h("span", { class: "x", text: "×", onclick: () => apply({ tag: "" }) })) : null,
     h("span", { class: "grow" }),
+    kind === "agent" && !app.readOnly ? h("button", { class: "btn", type: "button", title: "Die Agenten aus opencode.json und den Agent-Dateien als erste Version in den Store übernehmen (KI-Recht „Vorschlag“)", onclick: async () => (await act("agent.import", {})) && load() }, icon("import", 14), "Aus opencode übernehmen") : null,
     NEW_ROUTE[kind] && !app.readOnly ? h("a", { class: "btn primary", href: NEW_ROUTE[kind] }, icon("plus", 14), "Neu") : null,
   )
   const head = h("h1")

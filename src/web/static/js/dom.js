@@ -109,6 +109,18 @@ const ICONS = {
   workshop: "M14 7l3-3 3 3-3 3M3 21l9-9M8 8L4 4M10 14l-6 6",
   sun: "M12 8a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4",
   moon: "M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z",
+  chevron: "M9 6l6 6-6 6",
+  bell: "M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20a2 2 0 0 0 4 0",
+  belloff: "M6 16V11a6 6 0 0 1 9.5-4.9M18 11v5l2 2H8M10 20a2 2 0 0 0 4 0M3 3l18 18",
+  pause: "M7 5h3v14H7zM14 5h3v14h-3z",
+  filter: "M3 5h18l-7 8v6l-4 2v-8z",
+  layers: "M12 3l9 5-9 5-9-5zM3 13l9 5 9-5",
+  code: "M8 7l-5 5 5 5M16 7l5 5-5 5M14 4l-4 16",
+  gym: "M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10",
+  import: "M12 3v12M7 10l5 5 5-5M4 15v5h16v-5",
+  snippet: "M8 7l-5 5 5 5M16 7l5 5-5 5",
+  prompt: "M4 5h16v11H8l-4 4zM8 9h8M8 12h5",
+  github: "M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21",
 }
 
 export function icon(name, size = 16) {
@@ -131,6 +143,8 @@ export const KIND_LABEL = {
   arbeitsstand: "Arbeitsstand",
   ergebnis: "Ergebnis",
   session: "Session",
+  agent: "Agent",
+  settings: "Einstellung",
 }
 export const KIND_PLURAL = {
   skill: "Skills",
@@ -144,8 +158,9 @@ export const KIND_PLURAL = {
   arbeitsstand: "Arbeitsstände",
   ergebnis: "Ergebnisse",
   session: "Sessions",
+  agent: "Agenten",
 }
-export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat" }
+export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat", agent: "agent" }
 export const MEMORY_TYPES = { entscheidung: "Entscheidung", vorgabe: "Vorgabe", erfahrung: "Erfahrung" }
 export const MEMORY_PLURAL = { entscheidung: "Entscheidungen", vorgabe: "Vorgaben", erfahrung: "Erfahrungen" }
 export const STORE_KINDS = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"]
@@ -199,7 +214,7 @@ export const STATUS_LABEL = {
 }
 export const ACTOR_LABEL = { web: "Sie (Web)", command: "Sie (Befehl)", "user-web": "Sie (Web)", "user-command": "Sie (Befehl)", user: "Sie", reviewer: "Reviewer", curator: "Curator", doctor: "Doktor", system: "System", agent: "Agent", pipeline: "Pipeline", manual: "von Hand" }
 export const PRIORITIES = ["niedrig", "normal", "hoch", "kritisch"]
-export const COLUMN_LABEL = { neu: "neu", eingeplant: "eingeplant", in_umsetzung: "in Umsetzung", test: "test", erledigt: "erledigt" }
+export const COLUMN_LABEL = { neu: "neu", planung: "Planung", umsetzung: "Umsetzung", test: "Test", verifikation: "Verifikation", erledigt: "erledigt", eingeplant: "eingeplant", in_umsetzung: "in Umsetzung" }
 export const colLabel = (c) => COLUMN_LABEL[c] || String(c).replace(/_/g, " ")
 
 export const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim()
@@ -256,6 +271,7 @@ export const today = () => {
 // routes for ids
 // ---------------------------------------------------------------------------
 export const entryHref = (id, tab) => {
+  if (/^settings:/.test(id)) return `#/einstellungen?pfad=${encodeURIComponent(id.slice(9))}`
   if (/^task:/.test(id)) return `#/aufgabe/${encodeURIComponent(id.slice(5))}`
   if (/^project:/.test(id)) return `#/projekt/${encodeURIComponent(id.slice(8))}`
   if (/^session:/.test(id)) return `#/session/${encodeURIComponent(id.slice(8))}`

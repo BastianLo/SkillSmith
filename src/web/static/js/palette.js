@@ -24,6 +24,7 @@ const QUICK = [
   }],
 ]
 
+/** `nav`: pages of the feature areas (nav.js pages()). */
 export function openPalette(nav) {
   modal((close) => {
     const input = h("input", { placeholder: "Ansicht, Eintrag, Aufgabe oder Aktion …", "aria-label": "Befehlspalette", autocomplete: "off", autofocus: true })
@@ -31,7 +32,7 @@ export function openPalette(nav) {
     let items = []
     let sel = 0
     let entries = []
-    const views = nav.flatMap(([group, xs]) => xs.map(([path, label, ic]) => ({ label, group: `Ansicht · ${group}`, icon: ic, run: () => (location.hash = `#/${path}`) })))
+    const views = nav.map((p) => ({ label: p.label, group: `Ansicht · ${p.area}`, icon: p.icon, run: () => (location.hash = `#/${p.path}`) }))
     const quick = QUICK.map(([label, ic, run]) => ({ label, group: "Schnell", icon: ic, run }))
     const actions = [...app.catalog.values()].map((a) => ({ label: a.label, group: `Aktion · ${AREA_LABEL[a.area] || a.area}`, icon: "bolt", sub: a.name, run: () => actionForm(a) }))
     const draw = () => {

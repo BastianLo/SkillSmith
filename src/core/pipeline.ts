@@ -58,8 +58,11 @@ export interface PipelineRun {
   id: string
   project: string
   task?: string
-  trigger: "column" | "manual" | "agent" | "fix"
+  trigger: "column" | "manual" | "agent" | "fix" | "tests"
   by: string
+  /** ad-hoc stages (test cases with a command) instead of the project's pipeline */
+  defs?: PipelineStage[]
+  label?: string
   status: RunStatus
   source: "arbeitsverzeichnis" | "branch" | "worktree"
   workdir: string
@@ -264,12 +267,13 @@ export class Pipeline {
    * Queue a run. `workdir`: explicit (agent worktree); otherwise home_path or (source: branch)
    * a fresh worktree of the task's branch.
    */
-  start(input: { project: string; task?: string; trigger: PipelineRun["trigger"]; by: string; workdir?: string; branch?: string }): Promise<PipelineRun> {
+  start(input: { project: string; task?: string; trigger: PipelineRun["trigger"]; by: string; workdir?: string; branch?: string; stages?: PipelineStage[]; label?: string }): Promise<PipelineRun> {
     const p = this.ctx.projects.get(input.project)
     if (!p) throw new GuardError(`Projekt „${input.project}“ nicht gefunden`)
-    if (!p.pipeline?.stages.length) throw new GuardError(`Projekt „${p.title}“ hat keine Pipeline`)
+    const defs = input.stages ?? p.pipeline?.stages ?? []
+    if (!defs.length) throw new GuardError(`Projekt „${p.title}“ hat keine Pipeline`)
     if (!input.workdir && !p.homePath) throw new GuardError(`Projekt „${p.title}“ hat keinen home_path`)
-    const source = input.workdir ? "worktree" : p.pipeline.source
+    const source = input.workdir ? "worktree" : (p.pipeline?.source ?? "arbeitsverzeichnis")
     const run: PipelineRun = {
       id: `${new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)}-${shortId(4)}`,
       project: p.name,
@@ -281,7 +285,8 @@ export class Pipeline {
       workdir: input.workdir ?? expandPath(p.homePath!),
       branch: input.branch,
       queuedAt: nowIso(),
-      stages: p.pipeline.stages.map((s) => ({ name: s.name, run: s.run, status: "pending", ...(s.allowFailure ? { allowFailure: true } : {}) })),
+      stages: defs.map((s) => ({ name: s.name, run: s.run, status: "pending", ...(s.allowFailure ? { allowFailure: true } : {}) })),
+      ...(input.stages ? { defs: input.stages, label: input.label } : {}),
       owner: process.pid,
     }
     this.save(run)
@@ -398,7 +403,8 @@ export class Pipeline {
   private async execute(slot: { run: PipelineRun; child?: ChildProcess; abort: boolean }): Promise<void> {
     const run = slot.run
     const p = this.ctx.projects.get(run.project)
-    if (!p?.pipeline) throw new Error("Pipeline nicht mehr vorhanden")
+    const defs = run.defs ?? p?.pipeline?.stages
+    if (!p || !defs?.length) throw new Error("Pipeline nicht mehr vorhanden")
     run.status = "running"
     run.startedAt = nowIso()
     run.pid = process.pid
@@ -410,10 +416,10 @@ export class Pipeline {
       cleanup = await this.prepareWorkdir(run)
       if (!exists(run.workdir)) throw new Error(`Arbeitsverzeichnis ${run.workdir} fehlt`)
       run.codeHash = await this.codeHash(run.workdir)
-      this.append(run, `▶ Pipeline ${p.title} · ${run.workdir}${run.branch ? ` · ${run.branch}` : ""}\n`)
+      this.append(run, `▶ ${run.label ?? "Pipeline"} ${p.title} · ${run.workdir}${run.branch ? ` · ${run.branch}` : ""}\n`)
       let failed = false
-      for (let i = 0; i < p.pipeline.stages.length; i++) {
-        const def = p.pipeline.stages[i]
+      for (let i = 0; i < defs.length; i++) {
+        const def = defs[i]
         const st = run.stages[i]
         if (failed || slot.abort) {
           st.status = slot.abort ? "aborted" : "skipped"
@@ -444,7 +450,8 @@ export class Pipeline {
         if (st.status !== "success" && !def.allowFailure) failed = true
         this.save(run)
       }
-      const bad = run.stages.find((s) => !s.allowFailure && (s.status === "failed" || s.status === "timeout"))
+      // test cases (ad-hoc stages) all run; any red case makes the run red
+      const bad = run.stages.find((s) => (run.defs || !s.allowFailure) && (s.status === "failed" || s.status === "timeout"))
       run.status = slot.abort ? "aborted" : bad ? (bad.status === "timeout" ? "timeout" : "failed") : "success"
     } catch (err) {
       run.status = "error"

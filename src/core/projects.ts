@@ -9,6 +9,7 @@ import { isAbsolute, join, resolve, sep } from "node:path"
 import type { Options } from "../config"
 import type { Entry } from "../types"
 import { str, strArray } from "./frontmatter"
+import { normalizeFlow, type FlowConfig } from "./workflow"
 import type { Store } from "./store"
 
 export interface PipelineStage {
@@ -40,6 +41,8 @@ export interface ProjectView {
   columns: string[]
   wip: Record<string, number>
   pipeline?: PipelineDef
+  /** workflow per column (5b), validated */
+  flow?: Record<string, FlowConfig>
   tier: string
   aliases: string[]
 }
@@ -108,6 +111,12 @@ export class Projects {
     } catch {
       pipeline = undefined
     }
+    let flow: Record<string, FlowConfig> | undefined
+    try {
+      flow = normalizeFlow(f.flow, columns)
+    } catch {
+      flow = undefined
+    }
     const wip: Record<string, number> = { ...this.options.tasks.wipLimits }
     if (f.wip && typeof f.wip === "object") for (const [k, v] of Object.entries(f.wip as Record<string, unknown>)) if (Number(v) > 0) wip[k] = Math.round(Number(v))
     let homeExists = false
@@ -132,6 +141,7 @@ export class Projects {
       columns,
       wip,
       pipeline,
+      flow,
       tier: e.tier,
       aliases: strArray(f.aliases),
     }

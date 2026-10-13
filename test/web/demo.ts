@@ -13,6 +13,9 @@ import { executeAction } from "../../src/core/actions"
 import { agentHub, checkTool } from "../../src/core/agent-hub"
 import { finalizeRun } from "../../src/core/finalize"
 import { M } from "../../src/core/metrics"
+import { jobDefs } from "../../src/core/job-defs"
+import { JobScheduler } from "../../src/core/jobs"
+import { createLogger, withLogContext } from "../../src/log"
 import { BODY, ERROR_BODY, cmdRun, makeCtx, makeRun, tmp } from "../unit/helpers"
 
 const port = Number(process.argv[2] || process.env.DEMO_PORT || 47555)
@@ -51,8 +54,9 @@ function fakeClient() {
         s.status = "busy"
         setTimeout(async () => {
           const dir = query?.directory ?? s.directory
-          if (/^Du prüfst die Umsetzung/.test(text)) return reply(s, [{ type: "text", text: 'Der Diff passt zum Vorschlag. Ein Hinweis zur Fehlermeldung.\n```json\n[{"file": "src/Logout.java", "line": 4, "severity": "warn", "text": "Fehlermeldung nennt den Grund nicht"}]\n```' }], "verifier")
-          if (/PHASE 1|überarbeitet haben/.test(text)) {
+          if (/^Du verifizierst die Umsetzung/.test(text)) return reply(s, [{ type: "text", text: 'Beide Kriterien sind durch Diff und Testprotokoll belegt. Ein Hinweis zur Fehlermeldung.\n```json\n{"verdicts": [{"criterion": "K1", "verdict": "erfuellt", "evidence": "Logout ruft TokenStore.revoke auf (src/Logout.java:3); TF1 bestanden"}, {"criterion": "K2", "verdict": "erfuellt", "evidence": "TF2: zweiter Logout liefert 204"}], "findings": [{"file": "src/Logout.java", "line": 4, "severity": "warn", "text": "Fehlermeldung nennt den Grund nicht"}], "summary": "Erfüllt; Fehlermeldung könnte genauer sein."}\n```' }], "verifier")
+          if (/SCHRITT TEST/.test(text)) return reply(s, [tool("bash", "curl -X POST /logout (2×)", { command: "curl -s -o /dev/null -w '%{http_code}' -X POST localhost:8080/logout" }, "204\n204"), { type: "text", text: 'Getestet.\n```json\n[{"id": "TF2", "result": "bestanden", "protocol": "Zwei POST /logout hintereinander: beide 204."}]\n```' }], "tester")
+          if (/SCHRITT PLANUNG|überarbeitet haben/.test(text)) {
             const child = `ses_${++n}sub`
             sessions.set(child, { id: child, directory: dir, parentID: s.id, title: "Code lesen", status: "idle", messages: [msg("user", [{ type: "text", text: "Lies LoginController und finde die Session-Behandlung" }]), msg("assistant", [tool("read", "src/LoginController.java", { filePath: "src/LoginController.java" }), { type: "text", text: "Die Session wird in `invalidate()` beendet, das Token bleibt gültig." }], { mode: "explore" })] })
             agentHub().parents.set(child, s.id)
@@ -61,9 +65,9 @@ function fakeClient() {
             } catch {
               // the guard rejects writes of subagents in the proposal phase (audited)
             }
-            return reply(s, [tool("task", "Code lesen (explore)", { description: "Code lesen" }, "Session wird beendet, Token bleibt gültig"), { type: "text", text: 'Ich habe den Login-Ablauf gelesen.\n```json\n{"approach": "Beim Logout zusätzlich das Refresh-Token in der Datenbank sperren und den Endpunkt nur mit gültiger Session erlauben.", "files": ["src/Logout.java", "src/TokenStore.java"], "steps": ["TokenStore.revoke(userId) ergänzen", "Logout ruft revoke auf", "Test für doppelten Logout"], "risks": ["laufende Sessions anderer Geräte werden beendet"], "questions": ["Sollen alle Geräte abgemeldet werden?"], "tests": ["LogoutTest", "mvn verify"]}\n```' }])
+            return reply(s, [tool("task", "Code lesen (explore)", { description: "Code lesen" }, "Session wird beendet, Token bleibt gültig"), { type: "text", text: 'Ich habe den Login-Ablauf gelesen.\n```json\n{"approach": "Beim Logout zusätzlich das Refresh-Token in der Datenbank sperren und den Endpunkt nur mit gültiger Session erlauben.", "files": ["src/Logout.java", "src/TokenStore.java"], "steps": ["TokenStore.revoke(userId) ergänzen", "Logout ruft revoke auf", "Test für doppelten Logout"], "risks": ["laufende Sessions anderer Geräte werden beendet"], "questions": ["Sollen alle Geräte abgemeldet werden?"], "criteria": ["Refresh-Token ist nach dem Logout gesperrt", "Doppelter Logout liefert 204"], "testcases": [{"title": "Logout-Klasse vorhanden", "mode": "befehl", "command": "test -f src/Logout.java", "expected": "Exit 0"}, {"title": "Doppelter Logout", "mode": "agent", "steps": ["POST /logout", "POST /logout erneut"], "expected": "beide Antworten 204"}, {"title": "Abmelden im Browser auf T2", "mode": "manuell", "pre": "angemeldet auf T2", "steps": ["Abmelden klicken", "Seite neu laden"], "expected": "Login-Seite erscheint, Refresh schlägt fehl"}]}\n```' }])
           }
-          if (/PHASE 2/.test(text)) {
+          if (/SCHRITT UMSETZUNG/.test(text)) {
             mkdirSync(join(dir, "src"), { recursive: true })
             writeFileSync(join(dir, "src", "Logout.java"), 'class Logout {\n  void run(TokenStore store, String user) {\n    store.revoke(user);\n    throw new IllegalStateException("fehlgeschlagen");\n  }\n}\n')
             return reply(s, [tool("edit", "src/Logout.java", { filePath: "src/Logout.java" }, "ok"), tool("bash", "mvn -q test", { command: "mvn -q test" }, "Tests run: 12, Failures: 0"), { type: "text", text: "Umgesetzt: `Logout` sperrt das Token über `TokenStore.revoke`. Tests laufen." }])
@@ -152,7 +156,8 @@ async function main() {
   g("add", "-A")
   g("commit", "-q", "-m", "init")
 
-  const ctx = makeCtx({ web: { port, autostart: false }, tasks: { autoFixRounds: 1 } }, fakeClient())
+  // no autoStart: the demo moves cards without starting agents (deterministic state for the UI tests)
+  const ctx = makeCtx({ web: { port, autostart: false }, tasks: { autoFixRounds: 1, autoStart: false } }, fakeClient())
   const web = (action: string, args: Record<string, unknown> = {}, payload?: Uint8Array) => executeAction({ ctx, actor: "web" }, { action, args }, payload)
 
   // documents of the user (folders, links, tags, checklists, mermaid, code, table, image)
@@ -210,7 +215,7 @@ async function main() {
     home_path: home,
     agent: "orchestrator",
     color: "#0b7fbf",
-    wip: { in_umsetzung: 3 },
+    wip: { umsetzung: 3 },
     pipeline: { trigger: ["test"], source: "arbeitsverzeichnis", stages: [{ name: "build", run: "echo '[INFO] BUILD SUCCESS'" }, { name: "verify", run: "sh ci.sh && test -f fixed.txt -o -f src/LoginController.java", reports: "target/surefire-reports/*.xml", timeout: "20m" }, { name: "lint", run: "echo 'checkstyle: 0 Verstöße'", allowFailure: true }] },
   })
   await web("project.save", { name: "batch", title: "Batch-Verarbeitung", description: "Nächtliche Abgleiche mit DB2", color: "#8a44c6" })
@@ -222,9 +227,9 @@ async function main() {
   await t("DB2-Index für Token-Abfrage", { labels: ["db2"], priority: "kritisch" })
   await web("task.subtask", { target: "task:t-1", title: "TokenStore.revoke implementieren" })
   await web("task.subtask", { target: "task:t-1", title: "LogoutTest schreiben" })
-  await web("task.move", { target: "task:t-3", to: "eingeplant" })
-  await web("task.move", { target: "task:t-4", to: "eingeplant" })
-  await web("task.move", { target: "task:t-5", to: "in_umsetzung" })
+  await web("task.move", { target: "task:t-3", to: "planung" })
+  await web("task.move", { target: "task:t-4", to: "planung" })
+  await web("task.move", { target: "task:t-5", to: "umsetzung" })
   await web("task.move", { target: "task:t-2", to: "test" })
   await web("task.create", { title: "Nächtlichen Abgleich parallelisieren", project: "batch", labels: ["performance"] })
   await web("attachment.add", { path: `knowledge/_anhaenge/${new Date().toISOString().slice(0, 7)}/screenshot-fehler.png`, target: "task:t-2", name: "Screenshot Fehler" }, png(200, 90))
@@ -233,18 +238,20 @@ async function main() {
   await ctx.tasks.create(s, { title: "Mehrgeräte-Logout mit Fachbereich klären", project: "kundenportal", suggested: true, body: "> das machen wir später\n\n_Vorschlag von memorysmith_" })
   await finalizeRun(ctx, s, { ok: true })
 
-  // agent job: proposal → approval → implementation → pipeline (red, fix) → review → in test
+  // agent job: plan → gate 1 → implementation → pipeline (red, fix) → test cases (command, agent;
+  // the manual one waits for the user – the UI flow enters it) → verification → gate 2
   const a = await web("agent.assign", { target: "task:t-1", agent: "orchestrator", workplace: "worktree" })
   const job = (a.data as any).job
-  const until = async (phase: string) => {
-    for (let i = 0; i < 400 && ctx.agentTasks.get(job)?.phase !== phase; i++) {
+  const until = async (pred: (j: any) => boolean) => {
+    for (let i = 0; i < 400 && !pred(ctx.agentTasks.get(job)); i++) {
       await ctx.agentTasks.tick()
       await new Promise((r) => setTimeout(r, 50))
     }
   }
-  await until("awaiting_approval")
+  await until((j) => j?.phase === "waiting" && j.waitingFor === "plan")
   await web("agent.approve", { job, answers: "Sollen alle Geräte abgemeldet werden?\n→ Ja, alle Geräte." })
-  await until("in_test")
+  await until((j) => j?.phase === "waiting" && j.waitingFor === "tests")
+  ctx.agentTasks.start()
 
   // metrics over 90 days (charts, calendar, heatmap, tools)
   const m = ctx.metrics!
@@ -275,6 +282,19 @@ async function main() {
   await m.flush()
   // one red pipeline run for the statistics
   await ctx.pipeline.start({ project: "kundenportal", task: "t-2", trigger: "manual", by: "demo" }).catch(() => undefined)
+
+  // structured log, jobs with history (5a)
+  const log = createLogger(join(ctx.store.stateDir, "log"), { level: (a) => (ctx.options.log.areas[a] ?? ctx.options.log.level) as any, redact: (s) => ctx.redactor.redact(s) })
+  ctx.log = log
+  ctx.jobs = new JobScheduler(ctx, () => jobDefs(ctx))
+  await ctx.jobs.run("prune", "Start")
+  await ctx.jobs.run("lifecycle", "Start")
+  withLogContext({ run: "web-demo-pipeline-1" }, () => {
+    log.child("pipeline").info("Stufe build gestartet", { project: "kundenportal", command: "./ci.sh" })
+    log.child("pipeline").warn("Stufe test rot", { failed: 1, token: "sk-demo1234567890abcdef" })
+  })
+  withLogContext({ session: "ses_demo_1" }, () => log.child("reviewer").error("Review fehlgeschlagen", "ProviderModelNotFoundError: Model not found: Hermes/."))
+  log.child("embeddings").info("3 Eintrag/Kandidat(en) eingebettet")
 
   const info = await ctx.web!.start()
   console.log(`DEMO_URL ${info.url}`)

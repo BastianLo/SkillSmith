@@ -7,6 +7,7 @@ import { nowIso, truncate } from "../../util/text"
 import type { Ctx } from "../context"
 import { exportStatic } from "../export"
 import { finalizeRun } from "../finalize"
+import { shadowLine } from "../legacy"
 import { SMITH_SUBJECT_RE } from "../git"
 import { M } from "../metrics"
 import { GuardError, type StagedChange } from "../ops"
@@ -111,8 +112,8 @@ export const SYSTEM_ACTIONS: ActionDef[] = [
       const lines = (readText(ctx.ops.shadowFile) ?? "").split("\n").filter(Boolean)
       const line = lines[a.index]
       if (!line) throw new GuardError("Vorschlag nicht gefunden")
-      const p = JSON.parse(line)
-      run.smith = p.smith ?? "skillsmith"
+      const p = shadowLine(JSON.parse(line))
+      run.smith = p.smith
       const change: StagedChange = { id: `shadow-${a.index}`, runId: p.runId, createdAt: p.at, actor: p.actor, smith: p.smith, sessionID: p.sessionID, project: p.project, action: p.action, target: p.target, name: p.name, reason: p.reason, args: p.args }
       return { message: await ctx.ops.applyStaged(run, change), target: `${p.target}:${p.name}` }
     },

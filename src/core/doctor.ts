@@ -13,7 +13,7 @@
  * One run and one commit per doctor run; relations with a volatile end are local.
  */
 import type { Kind, Run } from "../types"
-import { key } from "../types"
+import { isSystemTarget, key } from "../types"
 import { isPrivate } from "./kinds"
 import { acquireFileLock } from "../util/fs"
 import { errorMessage, truncate } from "../util/text"
@@ -58,10 +58,11 @@ export class Doctor {
         if (a.kind === "result") mem.enqueue(a.name, "new")
         continue
       }
-      if (!DOCTOR_KINDS.includes(a.target)) continue
-      const e = this.ctx.store.getOwned(a.target, a.name)
+      const target = a.target
+      if (isSystemTarget(target) || !DOCTOR_KINDS.includes(target)) continue
+      const e = this.ctx.store.getOwned(target, a.name)
       if (!e || e.tier === "archive") continue
-      mem.enqueue(key(a.target, a.name), e.version)
+      mem.enqueue(key(target, a.name), e.version)
     }
   }
 

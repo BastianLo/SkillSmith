@@ -148,3 +148,15 @@ export function errorMessage(err: unknown): string {
     return String(err)
   }
 }
+
+/** Local calendar day "YYYY-MM-DD" of a timestamp (log files, daily metrics). */
+export function localDay(ms: number = Date.now()): string {
+  const d = new Date(ms)
+  const p = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
+}
+
+/** Literal text inside a RegExp. */
+export function escapeRegExp(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+}

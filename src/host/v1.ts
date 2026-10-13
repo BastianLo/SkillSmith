@@ -4,7 +4,7 @@
  */
 import { homedir } from "node:os"
 import { basename, join, resolve } from "node:path"
-import { expandHome, parseModel, resolveOptions, type Options } from "../config"
+import { expandHome, loadOptions, parseModel, type Options } from "../config"
 import { checkTool, relay } from "../core/agent-hub"
 import { sessionSignals, unwrap } from "../core/agent-runner"
 import type { Ctx } from "../core/context"
@@ -14,6 +14,10 @@ import { Graph } from "../core/graph"
 import { MemoryDb } from "../core/memory-db"
 import { ScopeResolver } from "../core/scope"
 import { attachServices, closeServices, startupServices } from "../core/services"
+import { jobDefs } from "../core/job-defs"
+import { registerAgents } from "../core/agent-defs"
+import { migrateTaskColumns } from "../core/tasks"
+import { releaseScheduler, sharedScheduler, userActivity } from "../core/jobs"
 import { WebServer } from "../web/server"
 import { EmbeddingClient, SemanticIndex } from "../core/embeddings"
 import { finalizeRun } from "../core/finalize"
@@ -90,7 +94,7 @@ function textOfParts(parts: AnyRecord[] | undefined): string {
 }
 
 export async function createServer(input: AnyRecord, rawOptions?: Record<string, unknown>): Promise<AnyRecord> {
-  const { options, warnings } = resolveOptions(rawOptions)
+  const { options, warnings } = loadOptions(rawOptions)
   if (!options.enabled) return {}
   const directory: string = resolve(input.directory ?? process.cwd())
   const worktree: string = resolve(input.worktree || directory)
@@ -99,13 +103,18 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
   ;(globalThis as any)[guardKey] = true
 
   const client = input.client
-  const log: Logger = createLogger(join(options.storeDir, "state", "log"), options.debug, (level, scope, msg) => {
-    try {
-      void client?.app?.log?.({ body: { service: "skillsmith", level, message: `[${scope}] ${msg}` } })?.catch?.(() => {})
-    } catch {
-      // ignore
-    }
+  // level per area from the live options (the settings page changes them in place)
+  const logHandle = createLogger(join(options.storeDir, "state", "log"), {
+    level: (area) => (options.debug ? "debug" : (options.log.areas[area] ?? options.log.level)),
+    sink: (level, scope, msg) => {
+      try {
+        void client?.app?.log?.({ body: { service: "skillsmith", level, message: `[${scope}] ${msg}` } })?.catch?.(() => {})
+      } catch {
+        // ignore
+      }
+    },
   })
+  const log: Logger = logHandle
   for (const w of warnings) log.warn(w)
 
   const store = new Store(options.storeDir, log.child("store"))
@@ -125,6 +134,7 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
   }
 
   const redactor = createRedactor(options.redact)
+  logHandle.configure({ redact: (s) => redactor.redact(s) })
   const index = new SearchIndex(store, options.indexForeignSkills)
   const embedClient = new EmbeddingClient(options.embedding, log.child("embed"))
   const vectorStore = options.embedding.enabled
@@ -163,7 +173,7 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
   ctx.scope = () => ctx.scopes.resolve(directory, worktree)
   ctx.graph = new Graph(store, ctx.mem, ctx.history)
   ctx.ops.setMemory(ctx.mem, ctx.graph)
-  attachServices(ctx)
+  attachServices(ctx, undefined, rawOptions)
   ctx.doctor = new Doctor(ctx)
   ctx.web = new WebServer(ctx)
   ctx.hints = new HintEngine(ctx)
@@ -173,14 +183,13 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
   ctx.ops.setSimilarity(ctx.retriever.similarity())
   const signals = sessionSignals()
   const curator = new Curator(ctx)
-  const queue = new ReviewQueue(ctx, (job) =>
-    reviewSession(ctx, job, () => {
-      curator.maybeRun("after-review")
-      ctx.doctor?.maybeRun("after-review")
-    }),
-  )
+  const queue = new ReviewQueue(ctx, (job) => reviewSession(ctx, job, () => ctx.jobs?.event("after-review")))
   ctx.queue = queue
   ctx.curator = curator
+  // recurring jobs: one scheduler per store and process; agent worktree instances only use it
+  const worktreeInstance = directory.startsWith(join(store.stateDir, "worktrees"))
+  const sched = worktreeInstance ? undefined : sharedScheduler(ctx, () => jobDefs(ctx))
+  ctx.jobs = sched?.scheduler ?? (globalThis as any)[Symbol.for(`skillsmith.jobs:${store.root}`)]
   const zod = await loadZod()
   const tools = createTools(ctx, zod)
   const metricEvents = new MetricEvents(ctx)
@@ -280,10 +289,14 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
         await ctx.git.init()
         await migrateStore()
         try {
+          const moved = await migrateTaskColumns(ctx)
+          if (moved) log.info(`${moved} task(s) moved to the 4.0 columns`)
+        } catch (err) {
+          log.warn("task column migration failed", errorMessage(err))
+        }
+        try {
           const st = startupServices(ctx)
           if (st.journal || st.baseline) log.info("audit/metrics initialised", st)
-          // idea 21: proposals for planned agent tasks are prepared at the start of opencode
-          void ctx.agentTasks.prepareProposals("start").then((n) => n && log.info(`${n} agent proposal(s) prepared`))
         } catch (err) {
           log.warn("audit/metrics startup failed", errorMessage(err))
         }
@@ -306,26 +319,9 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
             if (st.thresholdReached || st.userMsgsSinceReview >= options.idleMinNewMessages || st.reviewProgress) queue.enqueue(st.id, "catchup")
           }
         }
-        ctx.sessions.prune(30)
-        if (semantic) {
-          void semantic
-            .sync()
-            .then(async (n) => {
-              const st = embedClient.status
-              log.info(`embeddings: ${st.model ? `${st.model} · ${n} text(s) embedded` : `off (${st.lastError ?? st.state})`}`)
-              if (!st.model) return
-              const docs = (await ctx.projectDocs?.syncVectors()) ?? 0
-              const hist = (await ctx.history?.syncVectors()) ?? 0
-              if (docs || hist) log.info(`embeddings: ${docs} doc section(s), ${hist} session(s) embedded`)
-            })
-            .catch((err) => log.warn("embedding sync failed", errorMessage(err)))
-        }
         queue.start()
-        curator.maybeRun("startup")
-        if (ctx.doctor?.enabled) {
-          ctx.doctor.backfill()
-          ctx.doctor.maybeRun("startup", 60_000)
-        }
+        // start jobs (lifecycle, doctor, embeddings, prepared proposals, clean-up) and the schedule
+        if (sched?.owner) sched.scheduler.start()
         if (options.web.autostart) {
           void ctx.web
             ?.start()
@@ -362,6 +358,9 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
           if (!cfg.skills.paths.some((p: string) => resolve(expandHome(p)) === active)) cfg.skills.paths.push(active)
         }
         cfg.agent ??= {}
+        // agents managed in the store (5b) – the store version wins over opencode.json and agent files
+        const managed = registerAgents(ctx, cfg)
+        if (managed.length) log.info(`agents from the store: ${managed.join(", ")}`)
         for (const [name, agent] of Object.entries(cfg.agent as AnyRecord)) {
           if (isSmithAgent(name) || !agent || typeof agent !== "object") continue
           if (agent.permission !== undefined) agent.permission = withWriteToolsDenied(agent.permission)
@@ -478,6 +477,7 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
         const text = textOfParts(out.parts)
         if (text.startsWith(INTERNAL_PREFIX)) return
         clearIdle(sid)
+        userActivity().last = Date.now()
         const parent = await parentOf(sid)
         const model = inp.model?.providerID && inp.model?.modelID ? { providerID: String(inp.model.providerID), modelID: String(inp.model.modelID) } : undefined
         if (model) rememberModel(store.stateDir, model)
@@ -605,6 +605,11 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
 
     dispose: async () => {
       clearTimeout(startup)
+      if (sched?.owner) {
+        sched.scheduler.stop()
+        releaseScheduler(ctx, sched.scheduler)
+      }
+      ctx.settings?.dispose()
       ctx.doctor?.cancel()
       ctx.web?.stop()
       for (const t of idleTimers.values()) clearTimeout(t)
