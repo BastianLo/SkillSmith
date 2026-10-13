@@ -2,6 +2,7 @@
  * Library actions: run a script through call_script (5e); snippets and prompts (5j).
  */
 import { contextValues, fillPrompt, fillSnippet, liveTemplates, parsePromptArgs, snippetCode } from "../library"
+import { errorSignature } from "../signals"
 import { GuardError } from "../ops"
 import { expandPath } from "../projects"
 import { callScript } from "../scripts"
@@ -140,6 +141,28 @@ export const LIBRARY_ACTIONS: ActionDef[] = [
       if (a.dir && !/^\//.test(a.dir)) throw new GuardError("dir muss ein absoluter Pfad sein")
       const r = await ctx.reviews.prCheck(a.dir || (p?.homePath ? expandPath(p.homePath) : ctx.worktree), a.base || undefined)
       return { message: r.summary, data: r }
+    },
+  }),
+  defineAction({
+    name: "error.lookup",
+    label: "Fehler nachschlagen",
+    area: "eintrag",
+    smith: "errorsmith",
+    local: true,
+    readOnlySafe: true,
+    // the IntelliJ plugin sends failing run output; the occurrence is counted for errorsmith
+    args: { text: { t: "string", max: 20_000, min: 5, multiline: true }, command: { t: "string", max: 500, optional: true }, source: { t: "string", max: 40, optional: true } },
+    async run({ ctx }, _run, a) {
+      const text = ctx.redactor.redact(a.text)
+      const sig = errorSignature("run", a.command ?? a.source ?? "ide", text)
+      const known = ctx.store.list("error").filter((e) => e.tier !== "archive" && (e.fields.signatures as string[] | undefined)?.some((s) => s === sig.signature))
+      const hits = known.length ? [] : await ctx.retriever.search(text.slice(0, 2000), { kinds: ["error"], tiers: ["active", "dormant"], limit: 3, purpose: "error" }).catch(() => [])
+      const found = known.length ? known.map((e) => ({ id: `error:${e.name}`, title: e.title, score: 1 })) : hits.filter((h) => Math.max(h.confidence, h.similarity ?? 0) >= ctx.options.errorsmith.hintMinScore).map((h) => ({ id: `error:${h.name}`, title: h.title, score: Math.round(Math.max(h.confidence, h.similarity ?? 0) * 100) / 100 }))
+      ctx.occurrences.record({ sigKey: sig.sigKey, signature: sig.signature, tool: "ide", head: sig.head, sample: text.slice(0, 1000), project: ctx.project, entry: found[0]?.id.slice(6) })
+      await ctx.occurrences.flush().catch(() => undefined)
+      const top = found[0] ? ctx.store.getOwned("error", found[0].id.slice(6)) : undefined
+      const solution = top ? (/##\s+(lösung|loesung|solution|fix)[^\n]*\n([\s\S]*?)(?=\n##\s|$)/i.exec(top.body)?.[2] ?? "").trim() : ""
+      return { message: found.length ? `bekannter Fehler: ${found[0].title}` : "kein bekannter Fehler – vermerkt für errorsmith", data: { signature: sig.signature, found, solution } }
     },
   }),
 ]
