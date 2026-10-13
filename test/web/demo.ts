@@ -6,8 +6,9 @@
  *   bun test/web/demo.ts [port]        → prints the link with token
  */
 import { execFileSync } from "node:child_process"
-import { mkdirSync, writeFileSync } from "node:fs"
-import { join } from "node:path"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { deflateSync } from "node:zlib"
 import { executeAction } from "../../src/core/actions"
 import { agentHub, checkTool } from "../../src/core/agent-hub"
@@ -96,6 +97,16 @@ function fakeClient() {
           if (/Prüfbefehle des Projekts sind rot/.test(text)) {
             writeFileSync(join(dir, "fixed.txt"), "ok\n")
             return reply(s, [{ type: "text", text: "Nachgebessert: fehlende Datei ergänzt." }])
+          }
+          if (/^Du bearbeitest die PowerPoint/.test(text)) {
+            const plan = /Agenda/.test(text.split("## Aktueller Stand")[0])
+              ? { summary: "Agenda nach dem Deckblatt eingefügt.", ops: [{ op: "add_slide", at: 2, title: "Agenda", body: ["Ausgangslage", "Lösung", "Nächste Schritte"] }] }
+              : { summary: "Deckblatt, Ausgangslage und Lösung angelegt.", ops: [{ op: "add_slide", title: "Logout-Konzept", subtitle: "Team Billing · Oktober 2026" }, { op: "add_slide", title: "Ausgangslage", body: ["Refresh-Token bleibt nach dem Logout gültig", "Gestohlene Tokens funktionieren weiter"], notes: "Vorfall aus T2 erwähnen" }, { op: "add_slide", title: "Lösung", body: ["TokenStore.revoke beim Logout", "Doppelter Logout liefert 204"] }, { op: "add_table", slide: 3, rows: [["Schritt", "Aufwand"], ["revoke ergänzen", "1 Tag"], ["Tests", "0,5 Tage"]], y: 66, h: 22 }] }
+            return reply(s, [{ type: "text", text: "```json\n" + JSON.stringify(plan) + "\n```" }])
+          }
+          if (/^Du bearbeitest das Word/.test(text)) {
+            const plan = { summary: "Deckblatt vorangestellt.", ops: [{ op: "insert", after: "start", blocks: [{ style: "Title", text: "Konzept Logout" }, { style: "Subtitle", text: "Team Billing · Oktober 2026" }, { text: "Stand: Entwurf zur Abstimmung" }] }, { op: "page_break", before: "p0" }] }
+            return reply(s, [{ type: "text", text: "```json\n" + JSON.stringify(plan) + "\n```" }])
           }
           return reply(s, [{ type: "text", text: "ok" }])
         }, 30)
@@ -300,6 +311,20 @@ async function main() {
     { index: 1, type: "offen", title: "Mehrgeräte-Logout klären", text: "Mehrgeräte-Logout mit dem Fachbereich klären.", quote: "Mehrgeräte-Logout mit dem Fachbereich klären", page: 2, selected: true },
   ]
   require("node:fs").writeFileSync(require("node:path").join(ctx.store.stateDir, "imports", imp.id, "import.json"), JSON.stringify(st))
+
+  // office documents: a .potx template, a deck from it filled by the AI (accepted), an open
+  // draft on top, a Word document
+  const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "office")
+  await web("office.upload", { fileName: "Firmenvorlage.potx", title: "Firmenvorlage" }, new Uint8Array(readFileSync(join(fixtures, "firmenvorlage.potx"))))
+  await web("office.create", { format: "pptx", title: "Logout-Konzept", template: "office:firmenvorlage", prompt: "Erstelle bitte eine kurze Präsentation zum Logout-Konzept" })
+  const settle = async (n: string) => {
+    for (let i = 0; i < 2400 && (ctx.office!.isRunning(n) || !ctx.office!.draft(n) || ctx.office!.draft(n)!.status === "laeuft"); i++) await new Promise((r) => setTimeout(r, 25))
+  }
+  await settle("logout-konzept")
+  await web("office.accept", { target: "office:logout-konzept" })
+  ctx.office!.edit("logout-konzept", "Füge nach dem Deckblatt eine Agenda ein")
+  await settle("logout-konzept")
+  await web("office.upload", { fileName: "Konzept Logout.docx", title: "Konzept Logout (Word)" }, new Uint8Array(readFileSync(join(fixtures, "konzept-logout.docx"))))
 
   // metrics over 90 days (charts, calendar, heatmap, tools)
   const m = ctx.metrics!

@@ -119,6 +119,11 @@ const ICONS = {
   gym: "M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10",
   import: "M12 3v12M7 10l5 5 5-5M4 15v5h16v-5",
   snippet: "M8 7l-5 5 5 5M16 7l5 5-5 5",
+  office: "M3 4h18v12H3zM8 20h8M12 16v4M7 8h6M7 11h10",
+  back: "M15 18l-6-6 6-6",
+  download: "M12 4v11M7 10l5 5 5-5M5 20h14",
+  info: "M12 3a9 9 0 100 18 9 9 0 000-18zM12 11v6M12 7.5v.5",
+  spark: "M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z",
   prompt: "M4 5h16v11H8l-4 4zM8 9h8M8 12h5",
   github: "M9 19c-4 1.5-4-2-6-2.5M15 21v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1.1-.3-3.5 1.3a12 12 0 0 0-6.2 0C6.5 2.8 5.4 3.1 5.4 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21",
 }
@@ -146,6 +151,7 @@ export const KIND_LABEL = {
   code: "Code",
   snippet: "Snippet",
   prompt: "Prompt",
+  office: "Office",
   agent: "Agent",
   settings: "Einstellung",
 }
@@ -164,9 +170,10 @@ export const KIND_PLURAL = {
   code: "Code-Dateien",
   snippet: "Snippets",
   prompt: "Prompts",
+  office: "Office-Dokumente",
   agent: "Agenten",
 }
-export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat", agent: "agent", code: "code", snippet: "snippet", prompt: "prompt" }
+export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat", agent: "agent", code: "code", snippet: "snippet", prompt: "prompt", office: "office" }
 export const MEMORY_TYPES = { entscheidung: "Entscheidung", vorgabe: "Vorgabe", erfahrung: "Erfahrung" }
 export const MEMORY_PLURAL = { entscheidung: "Entscheidungen", vorgabe: "Vorgaben", erfahrung: "Erfahrungen" }
 export const STORE_KINDS = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"]
@@ -282,6 +289,7 @@ export const entryHref = (id, tab) => {
   if (/^project:/.test(id)) return `#/projekt/${encodeURIComponent(id.slice(8))}`
   if (/^session:/.test(id)) return `#/session/${encodeURIComponent(id.slice(8))}`
   if (/^code:/.test(id)) return `#/code?knoten=${encodeURIComponent(id)}`
+  if (/^office:/.test(id) && !tab) return `#/office/${encodeURIComponent(id.slice(7))}`
   return `#/eintrag/${encodeURIComponent(id)}${tab ? `?tab=${tab}` : ""}`
 }
 export const editHref = (id) => `#/editor/${encodeURIComponent(id)}`

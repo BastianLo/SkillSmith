@@ -96,6 +96,28 @@ export async function importFile(name, body, ai) {
   return parse(r)
 }
 
+/** Office documents: upload a new file / save the editor's file as a new version. */
+export async function officeUpload(file, params = {}) {
+  const r = await fetch(`/api/office/upload${qs({ name: file.name, ...params })}`, { method: "POST", headers: headers({ "content-type": "application/octet-stream" }), body: file })
+  return parse(r)
+}
+export async function officeSave(target, bytes, base) {
+  const r = await fetch(`/api/office/save${qs({ target, base })}`, { method: "POST", headers: headers({ "content-type": "application/octet-stream" }), body: bytes })
+  return parse(r)
+}
+/** Bytes of an office document (current, a commit, or the AI draft). */
+export async function officeFile(id, params = {}) {
+  const r = await fetch(`/api/office/file${qs({ id, ...params })}`, { headers: headers() })
+  if (!r.ok) {
+    let body = {}
+    try {
+      body = await r.json()
+    } catch {}
+    throw new ApiError(r.status, body)
+  }
+  return new Uint8Array(await r.arrayBuffer())
+}
+
 const blobCache = new Map()
 /** Attachment as object URL (images in the preview; <img src> cannot send the token header). */
 export async function attachmentUrl(path) {

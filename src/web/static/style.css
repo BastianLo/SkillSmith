@@ -48,6 +48,7 @@
   --k-code: #5b6b8c;
   --k-snippet: #3d7d8c;
   --k-prompt: #9a5b2c;
+  --k-office: #b4552d;
   --k-agent: #8a4fd1;
   --k-task: #0b7fbf;
   --k-project: #47566b;
@@ -99,9 +100,12 @@
   --k-code: #8fa0c2;
   --k-snippet: #6fb3c4;
   --k-prompt: #d39461;
+  --k-office: #e0845a;
     --k-code: #8fa0c2;
     --k-snippet: #6fb3c4;
     --k-prompt: #d39461;
+    --k-office: #e0845a;
+  --k-office: #e0845a;
     --k-agent: #b48cf0;
     --k-task: #4fb3ea;
     --k-project: #93a3b8;
@@ -903,3 +907,35 @@ a.code-anchor { font-family: var(--mono); font-size: 0.92em; }
 .finding { display: flex; flex-direction: column; gap: 6px; }
 .finding.weak { opacity: 0.75; border-style: dashed; }
 @media (max-width: 900px) { .import-cols { grid-template-columns: 1fr; } }
+
+/* office documents */
+.office-page { display: flex; flex-direction: column; gap: 12px; }
+.office-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.office-head .office-title { margin: 0; font-size: 20px; }
+.office-grid { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 14px; align-items: start; }
+.office-stage { min-height: 70vh; height: calc(100vh - 170px); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--panel-2); display: flex; }
+.office-stage > .loading, .office-stage > .notice { margin: auto; }
+.office-host { flex: 1; min-width: 0; height: 100%; overflow: auto; position: relative; }
+.office-side { max-height: calc(100vh - 170px); overflow: auto; }
+.office-side textarea { width: 100%; }
+.chips-wrap { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.chips-wrap .chip { cursor: pointer; border: 1px solid var(--border); background: var(--panel); white-space: normal; text-align: left; max-width: 100%; height: auto; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }
+.office-progress { display: flex; gap: 10px; align-items: center; margin: 10px 0; padding: 8px 10px; border-radius: 8px; background: var(--accent-soft); }
+.office-progress progress { width: 100%; height: 6px; }
+.office-steps { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.office-step { border-left: 3px solid var(--accent); padding: 2px 0 2px 10px; font-size: 13px; }
+.office-step ul { margin: 4px 0 0; padding-left: 18px; }
+.office-step ul.danger { color: var(--danger); }
+.office-versions { display: flex; flex-direction: column; gap: 6px; }
+.office-versions .version-item { cursor: default; }
+.office-text pre { max-height: 300px; overflow: auto; font-size: 12px; white-space: pre-wrap; }
+.btn.small { padding: 2px 8px; font-size: 12px; }
+@media (max-width: 900px) {
+  .office-grid { grid-template-columns: 1fr; }
+  .office-stage { height: 70vh; }
+  .office-side { max-height: none; }
+}
+.office-grid.editing { grid-template-columns: minmax(0, 1fr); }
+.office-grid.editing .office-side { display: none; }
+/* the viewers hide parts with the hidden attribute; their own display rules must not win */
+.office-host [hidden] { display: none !important; }

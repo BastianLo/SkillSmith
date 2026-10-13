@@ -14,7 +14,7 @@ skillsmith ist ein opencode-Plugin (Plugin-API v1, getestet mit opencode **1.18.
 | toolsmith | `script` | `toolsmith-reviewer`, `toolsmith-curator` | `toolsmith_*` |
 | memorysmith | `memory` (Entscheidung, Vorgabe, Erfahrung) + lokal: Arbeitsstand, Ergebnis | `memorysmith-reviewer`, `memorysmith-curator` | `memorysmith_*` |
 | doctor | Beziehungen zwischen allen Knoten, Konflikte | `smith-doctor` | `doctor_*` |
-| (Nutzer) | `task`, `project` (`userOwned`), eigene Dokumente in `knowledge` | `smith-assistant` (nur lesend: Entwürfe, Doku-Prüfung, Wissens-Chat) | Web-Aktionen (`src/core/actions`) |
+| (Nutzer) | `task`, `project`, `office` (`userOwned`), eigene Dokumente in `knowledge` | `smith-assistant` (nur lesend: Entwürfe, Doku-Prüfung, Wissens-Chat) | Web-Aktionen (`src/core/actions`) |
 
 Prinzipien:
 
@@ -121,7 +121,7 @@ src/core/graph.ts            Graph: Knoten (Store-Einträge, Arbeitsstände, Erg
 src/core/memory-format.ts    Textformen: Arbeitsstand, Erinnerungsliste, voller Eintrag mit Verknüpfungen, Stand-Block
 src/core/doctor.ts           Doctor: Queue nach Läufen, scan() (Kandidaten → Konflikte), judge() (Agent smith-doctor),
                              decide(), Folge-Läufe, Backfill
-src/core/actions/            Aktionskatalog (96 Aktionen, `ACTIONS`): entries (speichern mit Basisversion, umbenennen
+src/core/actions/            Aktionskatalog (139 Aktionen, `ACTIONS`): entries (speichern mit Basisversion, umbenennen
                              inkl. Link-Nachzug, verschieben, umwandeln, zusammenführen, archivieren, löschen),
                              docs (Dokumente, Ordner, Vorlagen, Anhänge, Vorschläge der KI, Tagesnotiz, Schnellnotiz,
                              Assistent), tasks (Aufgaben, Board, Projekte, Pipeline), agents (Auftrag, Freigabe,
@@ -163,7 +163,10 @@ src/web/static/              index.html, style.css, js/*.js (ES-Module ohne Buil
                              charts, cm, palette, parts, main) und js/views/*.js (eine Datei je Route, lazy);
                              vendor/: d3-force/d3-drag/d3-zoom/d3-selection (ISC; gebündelt als
                              `d3-force.min.js`), CodeMirror 6, uPlot 1.6.32, Mermaid 11.17.2,
-                             highlight.js 11.11.1 (Lizenzen daneben) – gebaut mit tools/vendor/build.sh
+                             highlight.js 11.11.1 (Lizenzen daneben) – gebaut mit tools/vendor/build.sh;
+                             vendor/office/: PowerPoint-/Word-Viewer und -Editor (pptx-vanilla-viewer 3.33.2,
+                             docx-vanilla-viewer 0.5.0, ein Build mit geteilten Chunks, THIRD-PARTY.txt) –
+                             tools/vendor/office/build.sh; js/office-viewer.js kapselt beide (mountOffice)
 src/core/anchors.ts          Code-Anker: parse, locate (Java/Kotlin/TS), pin, Prüfung nach Commits, Job anchors
 src/core/provenance.ts       Herkunft je Absatz (Absätze, Quellen, Status belegt/unbelegt/veraltet)
 src/core/quality.ts          Qualitätswert 0–100 je Eintrag
@@ -173,6 +176,13 @@ src/core/scripts.ts          TypeScript-Laufzeit und -Prüfung, call_script, JSO
 src/core/library.ts          Snippets und Prompts: Platzhalter, /prompt, Kandidaten, Live-Templates
 src/core/review-knowledge.ts Review-Kommentare aus GitHub, Kandidaten, Vor-PR-Prüfung
 src/core/importer.ts         Dokument-Import: lesen, extrahieren, übernehmen
+src/core/office.ts           Office-Dateien (pptx/docx/potx/dotx): sniffFormat, inspect (Text + Gliederung),
+                             applyOps (Änderungsplan der KI, Schritt für Schritt), blank/fromTemplate, editPrompt
+src/core/office-docs.ts      OfficeDocs (ctx.office): Upload, Neu (Vorlage), Speichern aus dem Editor, Version
+                             (git show als Bytes), Wiederherstellen, KI-Entwürfe in state/office/<name>/
+src/core/actions/office.ts   office.upload|create|save|edit|accept|discard|asTemplate
+src/vendor/office-core.js    ooxml für den Server (pptx-viewer-core, ooxml-core/pptx/automation, docx-core,
+                             JSZip; Bun-Bundle, lazy geladen) – gebaut mit tools/vendor/office/build.sh
 src/core/local-ctx.ts        Kontext ohne opencode (smith-CLI)
 src/py/smith_script.py, src/ts/smith-script.ts   Helfer des call_script-Vertrags
 bin/smith(.ts)               smith-CLI
@@ -215,6 +225,7 @@ Pro Smith zwei Agenten in `cfg.agent`, dazu `smith-doctor`: `mode: "primary"`, `
 | glossary | `glossary/<tier>/<slug>.md` | active/archive | name, term, aliases, meanings[{expansion, description, context?}], tags |
 | error | `errors/<tier>/<name>.md` | active/dormant/archive | name, title, description, status (solved\|open), signatures, context, tags |
 | script | `scripts/<tier>/<name>/SCRIPT.md` (+ `<modul>.py`, `test_<modul>.py`) | active/dormant/archive | name, description, usage, entry, capabilities, requirements, python, tags |
+| office | `office/<tier>/<name>/OFFICE.md` + `<datei>.pptx\|docx\|potx\|dotx` | active/archive | name, title, description, format, file, sha, size, pages, template, source, tags (Body = erkannter Text, nur aus der Datei) |
 | memory | `memories/<tier>/<projekt-slug>-<typ>-<thema>.md` | active/archive | name, title, description, type (entscheidung\|vorgabe\|erfahrung), scope (projekt\|global), project, project_name, topic (`typ/thema`), status (gueltig\|vorgeschlagen\|abgeloest), decided_by, valid_from, review_after, superseded_by, branch, ticket, tags |
 
 Frontmatter wird als YAML mit JSON-Flow-Werten geschrieben (`description: "…"`, `tags: ["a","b"]`) – gültiges YAML, robust lesbar. Der Leser versteht zusätzlich Block-Listen, Block-Skalare und einfache Quotes (Handbearbeitung).
@@ -328,6 +339,14 @@ Wie v1: mkdir-Locks (`store`, `git`, `review-<sid>`, `curator`, `lifecycle`, `us
 - **Projekt-Doku:** `ProjectDocs.scan()` höchstens alle 60 s (mtime/size-Cache je Datei, Inhalt redigiert), `syncVectors()` im Hintergrund (Start, nach Suche); `search()` = MiniIndex ∪ Vektoren per RRF. `docs_search` in einem Hintergrund-Lauf hängt die Treffer an `run.haystack` an (zählen als Nachweis).
 - **Frühere Sessions:** `HintEngine.select()` nutzt denselben Anfragevektor; Treffer nur mit Links oder gelöstem Problem (`isUseful`), nie die aktuelle Session; semantisch ≥ `sessionHintSimilarity`, sonst BM25 mit ≥ 3 Termen und Abdeckung ≥ 0,75; max. 2.
 
+### Office-Dokumente (PowerPoint, Word)
+
+- **Art `office`** (`userOwned`, Smith docsmith): Ordner mit `OFFICE.md` (Frontmatter + Text der Datei als Markdown) und der Datei. Suche, Embeddings (`entry-office`), Links, Graph und Verknüpfungen nutzen den Text; KI-Recht wie bei Dokumenten (Standard `office.defaultAi`). Geschrieben wird nur über `Ops.officeWrite` (nur Nutzer-Läufe, Geheimnis-Scan auf dem Text, ein Commit mit Datei + `OFFICE.md` + Meta); `Store.writeEntry` nimmt dafür `Uint8Array`. `entry.save` lehnt Body-Änderungen ab (der Text kommt aus der Datei), `entry.restoreVersion` geht an `OfficeDocs.restore` (Bytes per `git show` mit `encoding: buffer`).
+- **Formate:** `sniffFormat` prüft `[Content_Types].xml` (Makro- und Binärformate abgelehnt); Vorlage ↔ Dokument nur durch den Content-Type des Hauptteils (`retype`). `fromTemplate` entfernt die Beispielfolien bzw. den Inhalt.
+- **KI-Bearbeitung:** `office.edit` startet im Hintergrund: `inspect()` → Gliederung (Folien `e<n>`-Elemente mit Rolle title/subtitle/body, Layouts; Word-Blöcke mit Id und Formatvorlage) → `askAssistant` (Lese-Tools) → JSON-Plan `{summary, ops}` → `applyOps` je Operation, nach jedem Schritt Datei in `state/office/<name>/draft.<ext>`, `rev`+1 und Bus-Ereignis `office.draft` (die Ansicht lädt die Vorschau nach). Nie ein Commit; `office.accept` schreibt den Entwurf als Version (Prüfung gegen `baseVersion`, sonst `force`). KI-Recht `lesen`/`privat` → keine KI-Bearbeitung.
+- **PowerPoint-Platzhalter:** `applyLayout` legt die Platzhalter des Layouts erst beim Schreiben an – `add_slide` speichert und lädt neu, dann füllt es title/subtitle/body (`updateElement`), damit die Formatierung der Vorlage greift; fehlt ein Platzhalter, entsteht ein Textfeld. Platzhaltertypen kommen klein geschrieben (`ctrtitle`, `subtitle`, `body`, `obj`); Aufzählungszeichen der Bibliothek („• “) werden beim Lesen entfernt.
+- **Browser:** `views/office.js` (Liste, Neu-Dialog mit Vorlage + Prompt, Dokumentseite mit Vorschau/Editor, KI-Panel, Versionen); Bytes über `GET /api/office/file?id=&commit=|draft=1`, Upload/Speichern als `POST /api/office/upload|save` (octet-stream, `office.maxMB`, Origin/Token wie alle POSTs). Viewer: `trust.openInProtectedView`/`save.autoSave` gesperrt, `loadFile(…, {skipProtectedView})`; die Bibliothek blendet per `hidden` aus und ihr CSS überschreibt das – `.office-host [hidden] { display: none !important }`.
+
 ## 4. Invarianten (Tests schützen die meisten davon)
 
 1. Jede Schreiboperation geht durch `Ops`; neue Tools/Befehle **nie** direkt `store.*` aufrufen (Ausnahme: `markCandidatePromoted` bei `/glossary-ignore` innerhalb eines Befehlslaufs).
@@ -347,6 +366,7 @@ Wie v1: mkdir-Locks (`store`, `git`, `review-<sid>`, `curator`, `lifecycle`, `us
 15. `task` und `project` gehören dem Nutzer (`userOwned`): Agenten können sie nicht anlegen oder ändern; einzige Ausnahme sind Vorschläge von memorysmith (`fields.suggested`, Nutzerzitat als Beleg, max. 2 je Lauf, nur erste Spalte). Ein Agent setzt nie „erledigt“ und mergt nie selbst.
 16. Ein KI-Recht `lesen`/`vorschlag`/`privat` wird im Code durchgesetzt, nie nur im Prompt; private Dokumente erreichen kein Modell und keine Embeddings.
 17. Metriken enthalten keine Inhalte (keine Nachrichten, Tool-Argumente, Suchanfragen), nur Ids, Zahlen, Zeiten.
+18. Office-Dateien schreibt nur der Nutzer-Lauf über `Ops.officeWrite`; KI-Änderungen bleiben Entwurf in `state/office/`, bis der Nutzer übernimmt.
 
 ## 5. Verifizierte opencode-1.18-Fakten
 
@@ -373,7 +393,7 @@ Neuer Adapter `src/host/v2.ts`; zu prüfen: `cfg.skills` (Array), Agent-/Command
 ```bash
 cd skillsmith
 bun install                                   # nur Entwicklung (Typen, SDK für E2E)
-bun test test/unit                            # 213 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
+bun test test/unit                            # 216 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
 npx tsc --noEmit                              # strikte Typprüfung
 SKILLSMITH_TEST_PYTHON=/pfad/python3.9 bun test test/unit/smiths-flow.test.ts -t toolsmith   # Werkstatt mit Python 3.9
 OPENCODE_BIN=$(which opencode) bun test/e2e/run.ts   # E2E (107 Prüfungen, ~8 min)
@@ -386,6 +406,8 @@ tools/vendor/build.sh                         # Vendor-Bibliotheken neu bauen (n
 ```
 
 Phase 5 Teil 2 (Unit, je Schritt bewusst knapp): `phase5-quality.test.ts` (Anker Java/TS, Pin, geändert/verschoben/gelöscht, Passt noch, Herkunft, Qualitätswert), `phase5-gym.test.ts` (Kreuzprüfungs-Tor, Gym-Prüfungen, A/B-Runde mit Fake-Client), `phase5-scripts.test.ts` (TS-Prüfung, echter TS-Entwurf, call_script), `phase5-library.test.ts`, `phase5-reviews.test.ts`, `phase5-import.test.ts`. UI-Smoke enthält die neuen Seiten, UI-Flows „Passt noch“.
+
+Office (`office.test.ts`): leere Dateien, Vorlage ↔ Dokument, Plan-Parser, Word-Operationen; Vorlage hochladen → neue Präsentation mit Prompt → Entwurf in Live-Schritten (Bus) → Übernehmen (ein Commit) → Suche findet den Folientext → Version wiederherstellen; Word hochladen, KI-Recht „lesen“ sperrt die KI, Body-Schutz, Speichern aus dem Editor, Nicht-Office-Datei abgelehnt. Testdateien in `test/fixtures/office/` (mit python-pptx/python-docx erzeugt). Demo: Vorlage, Präsentation aus Vorlage + KI, offener Entwurf, Word-Dokument; UI-Smoke `#/office…`, UI-Flows: KI-Entwurf in Word übernehmen, Folientitel im Editor ändern und speichern.
 
 Phase 4 (Unit): `phase4-actions.test.ts` (Katalog, Speichern mit Basisversion/409, Bestätigungen/428, Undo, Umbenennen mit Link-Nachzug, KI-Recht in Ops/Suche/Hinweisen, Vorschläge, Anhänge, Ordner, Vorlagen, Token-Pflicht, Lese-Sperre, Audit mit Hash-Kette), `phase4-insight.test.ts` (Metriken, Relevanz, Versionen/Diff, Links/Rückverweise, Export), `phase4-work.test.ts` (Aufgaben, WIP, Unteraufgaben, Checklisten, memorysmith-Vorschläge, `/task` `/note`, Pipeline mit JUnit/Schwärzung/Zeitlimit/Warteschlange, kompletter Agenten-Ablauf mit Fake-Client inkl. Guard über Subagenten, Nachbessern, Review, Merge, Regeln; Eingang, Simulator, Landkarte, Graph-Pfad/-Zeitreise).
 

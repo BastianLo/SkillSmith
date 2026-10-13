@@ -33,6 +33,7 @@ export const AREAS = [
     icon: "doc",
     items: [
       { path: "dokumente", label: "Dokumente", icon: "doc" },
+      { path: "office", label: "Office", icon: "office" },
       { path: "suche", label: "Suche", icon: "search" },
       { path: "graph", label: "Graph", icon: "graph" },
       { path: "landkarte", label: "Landkarte", icon: "map" },
@@ -138,6 +139,8 @@ export const ROUTES = [
   ["werkstatt/:name", V("workshop"), "bibliothek"],
   ["export", V("export"), "system"],
   ["chat", V("chat"), "wissen"],
+  ["office", V("office"), "wissen"],
+  ["office/:name", V("office"), "wissen"],
   ["import", V("import"), "wissen"],
   ["import/:id", V("import"), "wissen"],
   ["einstellungen", V("settings"), "system"],

@@ -21,6 +21,8 @@ import { fileURLToPath } from "node:url"
 import { ActionError, executeAction, needsStrongToken, toActionError, type ActionRequest } from "../core/actions"
 import type { Ctx } from "../core/context"
 import { ATTACHMENT_DIR } from "../core/store"
+import { OFFICE_MIME } from "../core/office"
+import { str } from "../core/frontmatter"
 import { readJson, writeJsonAtomic } from "../util/fs"
 import { errorMessage, nowIso, shortId, slugify } from "../util/text"
 import { NotFound, ReadApi } from "./api"
@@ -200,7 +202,7 @@ export class WebServer {
     }
     if (req.method === "OPTIONS") return new Response("preflight not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     const isPost = req.method === "POST"
-    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload" || url.pathname === "/api/import"
+    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload" || url.pathname === "/api/import" || url.pathname === "/api/office/upload" || url.pathname === "/api/office/save"
     if (req.method !== "GET" && req.method !== "HEAD" && !(isPost && writePath)) return new Response("method not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     if (!url.pathname.startsWith("/api/")) return this.staticFile(url.pathname)
     const given = req.headers.get("x-smith-token") ?? ""
@@ -224,6 +226,7 @@ export class WebServer {
         this.ctx.audit?.security("origin", `Sec-Fetch-Site ${site}`)
         return this.json(403, { error: "nur aus der Weboberfläche selbst" })
       }
+      if (url.pathname.startsWith("/api/office/")) return this.officeUpload(req, url)
       return url.pathname === "/api/action" ? this.action(req, hasToken) : url.pathname === "/api/import" ? this.importUpload(req, url) : this.upload(req, url)
     }
     try {
@@ -232,6 +235,7 @@ export class WebServer {
         return this.live.stream(Number(req.headers.get("last-event-id") ?? url.searchParams.get("since") ?? 0) || 0, this.headers("text/event-stream; charset=utf-8"))
       }
       if (url.pathname === "/api/attachment") return this.attachment(url.searchParams.get("path") ?? "")
+      if (url.pathname === "/api/office/file") return await this.officeFile(url.searchParams)
       if (url.pathname === "/api/download") return this.download(url.searchParams.get("file") ?? "")
       return this.json(200, await this.api(url.pathname.slice(5), url.searchParams))
     } catch (err) {
@@ -288,6 +292,44 @@ export class WebServer {
       const e = toActionError(err)
       return this.json(e.status, { error: e.message })
     }
+  }
+
+  /** Office documents: upload a new file or save the editor's file as a new version (raw bytes). */
+  private async officeUpload(req: Request, url: URL): Promise<Response> {
+    const ctx = this.ctx
+    try {
+      if (ctx.options.web.readOnly) return this.json(403, { error: "Die Weboberfläche ist nur lesend" })
+      const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase()
+      if (type !== "application/octet-stream") return this.json(415, { error: "nur application/octet-stream" })
+      const data = await this.body(req, Math.round(ctx.options.office.maxMB * 1024 * 1024))
+      const q = url.searchParams
+      const input =
+        url.pathname === "/api/office/save"
+          ? { action: "office.save", args: { target: q.get("target") ?? "", reason: q.get("reason") || undefined }, base: q.get("base") || undefined }
+          : { action: "office.upload", args: { fileName: (q.get("name") ?? "").slice(0, 200), title: q.get("title") || undefined, ai: q.get("ai") || undefined } }
+      const result = await executeAction({ ctx, actor: "web" }, input as ActionRequest, data)
+      return this.json(200, result)
+    } catch (err) {
+      const e = toActionError(err)
+      return this.json(e.status, { error: e.message, ...e.body })
+    }
+  }
+
+  /** The file of an office document: current, a version (commit) or the AI draft. */
+  private async officeFile(q: URLSearchParams): Promise<Response> {
+    const office = this.ctx.office
+    if (!office) return this.json(404, { error: "Office-Dokumente nicht verfügbar" })
+    const id = q.get("id") ?? ""
+    const name = id.startsWith("office:") ? id.slice(7) : id
+    const e = this.ctx.store.getOwned("office", name)
+    if (!e) return this.json(404, { error: "Office-Dokument nicht gefunden" })
+    const format = office.formatOf(e)
+    const commit = q.get("commit")
+    const bytes = q.get("draft") === "1" ? office.draftBytes(name) : commit ? await office.bytesAt(e, commit) : office.bytes(e)
+    if (!bytes) return this.json(404, { error: "kein Entwurf" })
+    return new Response(bytes, {
+      headers: this.headers(OFFICE_MIME[format], { "cache-control": "no-store", "content-disposition": `attachment; filename="${str(e.fields.file) || `${name}.${format}`}"`, "content-security-policy": "default-src 'none'; sandbox" }),
+    })
   }
 
   /** Attachment upload: raw bytes, stored below knowledge/_anhaenge/<YYYY-MM>/ (one commit). */

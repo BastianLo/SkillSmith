@@ -314,6 +314,55 @@ await page.waitForTimeout(800)
   await page.screenshot({ path: join(shots, "f14-code-anker.png") })
 }
 
+// 15. office: the AI edits the Word document by prompt (draft, live), "Übernehmen" = new version
+{
+  await go("#/office/konzept-logout-word", 3000)
+  const before = (await api("versions?id=office%3Akonzept-logout-word")).length
+  await page.fill(".office-side textarea", "Erstelle bitte ein Deckblatt")
+  await page.getByRole("button", { name: "Ausführen" }).click()
+  await page.getByRole("button", { name: "Übernehmen" }).waitFor({ timeout: 30000 })
+  await page.waitForTimeout(1500)
+  await page.screenshot({ path: join(shots, "f15-office-ki-entwurf.png") })
+  await page.getByRole("button", { name: "Übernehmen" }).click()
+  await page.waitForTimeout(2500)
+  const one = await api("office/one?id=office%3Akonzept-logout-word")
+  const after = (await api("versions?id=office%3Akonzept-logout-word")).length
+  check("Office: KI-Entwurf übernommen (neue Version, Text durchsuchbar)", after === before + 1 && one.text.includes("Team Billing") && !one.draft, `${before}→${after}`)
+}
+
+// 16. office: edit a slide title in the PowerPoint editor and save it as a new version
+{
+  await go("#/office/logout-konzept", 3000)
+  const seg = page.locator(".office-head .seg button", { hasText: "Aktuell" })
+  if (await seg.count()) {
+    await seg.click()
+    await page.waitForTimeout(2000)
+  }
+  await page.getByRole("button", { name: "Selbst bearbeiten" }).click()
+  await page.waitForTimeout(3500)
+  // the main slide: the largest stage (thumbnails use the same class)
+  const box = await page.evaluate(() => {
+    const els = [...document.querySelectorAll(".office-host .pptxv-stage")].map((e) => e.getBoundingClientRect()).sort((a, b) => b.width * b.height - a.width * a.height)
+    const r = els[0]
+    return { x: r.x, y: r.y, width: r.width, height: r.height }
+  })
+  // title of the cover slide: centre, a little above the middle
+  await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height * 0.45)
+  await page.waitForTimeout(600)
+  await page.keyboard.press("End")
+  await page.keyboard.type(" 2027")
+  await page.mouse.click(box.x + 20, box.y + box.height - 20)
+  await page.waitForTimeout(600)
+  await page.getByRole("button", { name: "Als neue Version speichern" }).click()
+  await page.waitForTimeout(800)
+  const confirm = page.locator(".dialog").getByRole("button", { name: "Speichern" })
+  if (await confirm.count()) await confirm.click()
+  await page.waitForTimeout(2500)
+  const one = await api("office/one?id=office%3Alogout-konzept")
+  check("Office: Folientitel im Editor geändert und gespeichert", /Logout-Konzept 2027/.test(one.text), one.text.slice(0, 80))
+  await page.screenshot({ path: join(shots, "f16-office-editor.png") })
+}
+
 await browser.close()
 const bad = results.filter((r) => !r[1])
 if (errors.length) console.error(errors.join("\n"))

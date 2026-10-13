@@ -660,6 +660,50 @@ const SPECS: Record<Kind, KindSpec> = {
       return [[3, e.title], [3, e.name.replace(/-/g, " ")], [2, e.description], [2, e.tags.join(" ")], [1, e.body]]
     },
   },
+  office: {
+    kind: "office",
+    smith: "docsmith",
+    dir: "office",
+    layout: "dir",
+    main: "OFFICE.md",
+    tiers: ["active", "archive"],
+    label: "Office-Dokument",
+    labelPlural: "Office-Dokumente",
+    aliases: ["office", "pptx", "docx", "powerpoint", "word", "praesentation", "präsentation"],
+    // the user's documents; the AI changes them only by the user's prompt (src/core/office-docs.ts)
+    userOwned: true,
+    parse(content, fallbackName) {
+      const { fm, body } = parseDoc(content)
+      const name = str(fm.name) || fallbackName
+      const fields: Record<string, unknown> = { ...commonIn(fm) }
+      for (const k of ["format", "file", "sha", "template", "source"]) if (str(fm[k])) fields[k] = str(fm[k])
+      for (const k of ["size", "pages"]) if (Number.isFinite(Number(fm[k])) && fm[k] !== undefined && fm[k] !== "") fields[k] = Number(fm[k])
+      return { name, title: str(fm.title) || name, description: str(fm.description), tags: normalizeTags(fm.tags), fields, body }
+    },
+    serialize(e) {
+      const f = e.fields
+      return serializeDoc(
+        [
+          ["name", e.name],
+          ["title", e.title !== e.name ? e.title : ""],
+          ["description", e.description],
+          ["format", str(f.format)],
+          ["file", str(f.file)],
+          ["sha", str(f.sha)],
+          ["size", typeof f.size === "number" ? f.size : undefined],
+          ["pages", typeof f.pages === "number" ? f.pages : undefined],
+          ["template", str(f.template)],
+          ["source", str(f.source)],
+          ["tags", e.tags],
+          ...commonOut(f),
+        ],
+        e.body,
+      )
+    },
+    searchFields(e) {
+      return [[4, e.title], [3, e.name.replace(/-/g, " ")], [2, e.description], [2, `${e.tags.join(" ")} ${str(e.fields.format)}`], [1, e.body]]
+    },
+  },
 }
 
 /** Language of the first fenced code block ("```java" → java). */

@@ -74,6 +74,9 @@ const routes: Array<[string, string, string?]> = [
   ["59-neues-snippet", "#/neu/snippet"],
   ["60-snippet", "#/eintrag/snippet%3Aslf4j-logger"],
   ["61-import-detail", "#/import"],
+  ["62-office", "#/office"],
+  ["63-office-praesentation", "#/office/logout-konzept"],
+  ["64-office-word", "#/office/konzept-logout-word"],
 ]
 
 const browser = await chromium.launch({ executablePath: process.env.CHROMIUM || "/opt/pw-browsers/chromium" })
@@ -88,7 +91,7 @@ for (const theme of ["light", "dark"]) {
   const list = theme === "light" ? routes : routes.filter(([n]) => /uebersicht|board|graph|statistik$|editor|aufgabe/.test(n))
   for (const [name, hash] of list) {
     await page.goto(`${base}${hash}`)
-    await page.waitForTimeout(/graph|landkarte|editor|statistik|04-|10-/.test(name) ? 2200 : 900)
+    await page.waitForTimeout(/graph|landkarte|editor|statistik|04-|10-|office-/.test(name) ? 2200 : 900)
     await page.screenshot({ path: join(outDir, `${name}${theme === "dark" ? "-dunkel" : ""}.png`), fullPage: false })
   }
   if (theme === "light") {

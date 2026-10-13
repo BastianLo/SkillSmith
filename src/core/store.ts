@@ -96,7 +96,7 @@ export interface CreateOptions {
   folder?: string
   tier?: Tier
   /** extra files in the entry directory (dir layout only), name → content */
-  files?: Record<string, string>
+  files?: Record<string, string | Uint8Array>
   meta?: Partial<Meta>
   action?: string
 }
@@ -107,7 +107,7 @@ export interface UpdateChange {
   tags?: string[]
   fields?: Record<string, unknown>
   body?: string
-  files?: Record<string, string>
+  files?: Record<string, string | Uint8Array>
   baseVersion?: string
 }
 
@@ -549,7 +549,7 @@ export class Store {
     })
   }
 
-  private writeEntry(kind: Kind, tier: Tier, content: EntryContent, files?: Record<string, string>, folder?: string): string[] {
+  private writeEntry(kind: Kind, tier: Tier, content: EntryContent, files?: Record<string, string | Uint8Array>, folder?: string): string[] {
     const s = spec(kind)
     const main = this.mainFile(kind, tier, content.name, folder)
     ensureDir(dirname(main))
@@ -560,7 +560,8 @@ export class Store {
       for (const [fname, text] of Object.entries(files)) {
         if (!/^[A-Za-z0-9_.-]+$/.test(fname) || fname === s.main) throw new StoreError(`invalid file name ${fname}`)
         const p = join(dirname(main), fname)
-        writeFileAtomic(p, text)
+        if (typeof text === "string") writeFileAtomic(p, text)
+        else writeBufferAtomic(p, text)
         written.push(p)
       }
     }
