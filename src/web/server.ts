@@ -202,7 +202,7 @@ export class WebServer {
     }
     if (req.method === "OPTIONS") return new Response("preflight not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     const isPost = req.method === "POST"
-    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload" || url.pathname === "/api/import" || url.pathname === "/api/office/upload" || url.pathname === "/api/office/save"
+    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload" || url.pathname === "/api/import" || url.pathname === "/api/office/upload" || url.pathname === "/api/office/save" || url.pathname === "/api/skill/upload"
     if (req.method !== "GET" && req.method !== "HEAD" && !(isPost && writePath)) return new Response("method not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     if (!url.pathname.startsWith("/api/")) return this.staticFile(url.pathname)
     const given = req.headers.get("x-smith-token") ?? ""
@@ -227,6 +227,7 @@ export class WebServer {
         return this.json(403, { error: "nur aus der Weboberfläche selbst" })
       }
       if (url.pathname.startsWith("/api/office/")) return this.officeUpload(req, url)
+      if (url.pathname === "/api/skill/upload") return this.skillUpload(req, url)
       return url.pathname === "/api/action" ? this.action(req, hasToken) : url.pathname === "/api/import" ? this.importUpload(req, url) : this.upload(req, url)
     }
     try {
@@ -308,6 +309,23 @@ export class WebServer {
           ? { action: "office.save", args: { target: q.get("target") ?? "", reason: q.get("reason") || undefined }, base: q.get("base") || undefined }
           : { action: "office.upload", args: { fileName: (q.get("name") ?? "").slice(0, 200), title: q.get("title") || undefined, ai: q.get("ai") || undefined } }
       const result = await executeAction({ ctx, actor: "web" }, input as ActionRequest, data)
+      return this.json(200, result)
+    } catch (err) {
+      const e = toActionError(err)
+      return this.json(e.status, { error: e.message, ...e.body })
+    }
+  }
+
+  /** Skill package upload: .zip/.skill, SKILL.md or a folder as JSON (raw bytes, one commit). */
+  private async skillUpload(req: Request, url: URL): Promise<Response> {
+    const ctx = this.ctx
+    try {
+      if (ctx.options.web.readOnly) return this.json(403, { error: "Die Weboberfläche ist nur lesend" })
+      const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase()
+      if (type !== "application/octet-stream") return this.json(415, { error: "nur application/octet-stream" })
+      const data = await this.body(req, 16 * 1024 * 1024)
+      const q = url.searchParams
+      const result = await executeAction({ ctx, actor: "web" }, { action: "skill.upload", args: { fileName: (q.get("name") ?? "").slice(0, 200), force: q.get("force") === "1" || undefined } } as ActionRequest, data)
       return this.json(200, result)
     } catch (err) {
       const e = toActionError(err)

@@ -2,7 +2,8 @@
  * Read endpoints of the features since 5a, one small module per feature instead of a growing
  * switch in api.ts. Each endpoint gets the context and the query; it only reads.
  */
-import { join } from "node:path"
+import { statSync } from "node:fs"
+import { join, relative } from "node:path"
 import type { Ctx } from "../core/context"
 import { groupByRun, readLogs, tailLogs, type LogFilter } from "../core/logs"
 import type { Level } from "../log"
@@ -29,6 +30,14 @@ function logFilter(q: URLSearchParams): LogFilter {
   }
 }
 
+const statSize = (p: string) => {
+  try {
+    return statSync(p).size
+  } catch {
+    return 0
+  }
+}
+
 const logDir = (ctx: Ctx) => join(ctx.store.stateDir, "log")
 
 export const ENDPOINTS: Record<string, Endpoint> = {
@@ -50,6 +59,7 @@ export const ENDPOINTS: Record<string, Endpoint> = {
       text: e.body,
       draft: draft ? { ...draft, running: ctx.office?.isRunning(name) ?? false, stale: draft.baseVersion !== e.version } : undefined,
       aiEdit: ctx.options.office.aiEdit,
+      skills: [...(ctx.options.office.skills[e.fields.format === "pptx" || e.fields.format === "potx" ? "pptx" : "docx"] ?? [])],
     }
   },
   "office/list": (ctx, q) => {
@@ -66,6 +76,30 @@ export const ENDPOINTS: Record<string, Endpoint> = {
   "office/templates": (ctx, q) => {
     const family = q.get("family")
     return (ctx.office?.templates(family === "pptx" || family === "docx" ? family : undefined) ?? []).map((e) => ({ id: `office:${e.name}`, title: e.title, format: e.fields.format }))
+  },
+  // skills that the PowerPoint/Word agents load completely with every AI edit
+  "office/skills": (ctx) => {
+    const skills = ctx.store
+      .list("skill")
+      .filter((e) => e.tier !== "archive" && e.fields.ai !== "privat")
+      .map((e) => ({ name: e.name, description: e.description, tier: e.tier, files: ctx.store.supportFiles(e, 200).length }))
+      .sort((a, b) => a.name.localeCompare(b.name))
+    const o = ctx.options.office
+    return { pptx: [...o.skills.pptx], docx: [...o.skills.docx], maxChars: o.skillMaxChars, skills }
+  },
+  // files of a skill (references/…) and one file as text
+  "skill/files": (ctx, q) => {
+    const e = ctx.store.get("skill", (q.get("name") ?? "").replace(/^skill:/, ""))
+    if (!e) return { missing: true }
+    return { name: e.name, files: ctx.store.supportFiles(e, 200).map((f) => ({ path: relative(e.dir, f), size: statSize(f) })).sort((a, b) => a.path.localeCompare(b.path)) }
+  },
+  "skill/file": (ctx, q) => {
+    const e = ctx.store.get("skill", (q.get("name") ?? "").replace(/^skill:/, ""))
+    const path = (q.get("path") ?? "").replace(/^\.?\/+/, "")
+    if (!e || !path || path.split("/").some((x) => x === ".." || x === "")) return { missing: true }
+    if (!/\.(md|markdown|txt|json|ya?ml|csv|tsv|xml|html|css|svg|py|ts|js|mjs|sh|sql|toml|ini)$/i.test(path)) return { binary: true, path }
+    const text = ctx.store.readFileOf(e, path)
+    return text === undefined ? { missing: true } : { path, text }
   },
   // settings page
   settings: (ctx) => {

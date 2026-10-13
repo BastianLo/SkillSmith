@@ -315,6 +315,10 @@ async function main() {
   // office documents: a .potx template, a deck from it filled by the AI (accepted), an open
   // draft on top, a Word document
   const fixtures = join(dirname(fileURLToPath(import.meta.url)), "..", "fixtures", "office")
+  // a skill package with reference files, assigned to the PowerPoint agent (loaded completely)
+  const skillDir = { "praesentation/SKILL.md": "---\nname: praesentation-firmenstil\ndescription: \"Präsentationen im Firmenstil: Aufbau, Folientypen, Stil\"\n---\n# Präsentationen im Firmenstil\n\nFolge [Styleguide](references/styleguide.md) und [Design-Patterns](references/design-patterns.md).\n", "praesentation/references/styleguide.md": "# Styleguide\n\n- Titel höchstens 6 Wörter\n- Primärfarbe #0A3D62\n", "praesentation/references/design-patterns.md": "# Design-Patterns\n\n- Eine Aussage pro Folie\n- Agenda nach dem Deckblatt\n" }
+  await web("skill.upload", { fileName: "praesentation.skilldir.json" }, new TextEncoder().encode(JSON.stringify({ files: Object.entries(skillDir).map(([path, t]) => ({ path, data: Buffer.from(t).toString("base64") })) })))
+  await web("settings.set", { values: { "office.skills.pptx": ["praesentation-firmenstil"] } })
   await web("office.upload", { fileName: "Firmenvorlage.potx", title: "Firmenvorlage" }, new Uint8Array(readFileSync(join(fixtures, "firmenvorlage.potx"))))
   await web("office.create", { format: "pptx", title: "Logout-Konzept", template: "office:firmenvorlage", prompt: "Erstelle bitte eine kurze Präsentation zum Logout-Konzept" })
   const settle = async (n: string) => {
