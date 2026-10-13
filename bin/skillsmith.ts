@@ -298,7 +298,7 @@ function storeFromConfig(): string | undefined {
   return undefined
 }
 
-function resolveStore(flag: string | undefined): { dir: string; source: string } {
+export function resolveStore(flag: string | undefined): { dir: string; source: string } {
   if (flag) return { dir: resolve(expandHome(flag)), source: "--store" }
   if (process.env.SKILLSMITH_STORE_DIR) return { dir: resolve(expandHome(process.env.SKILLSMITH_STORE_DIR)), source: "SKILLSMITH_STORE_DIR" }
   if (process.env.SKILLSMITH_HOME) return { dir: resolve(expandHome(process.env.SKILLSMITH_HOME)), source: "SKILLSMITH_HOME" }
@@ -324,7 +324,7 @@ const webFile = (store: string) => join(stateDir(store), "web.json")
 const logFile = (store: string) => join(stateDir(store), "log", "skillsmith.log")
 const outFile = (store: string) => join(stateDir(store), "log", "opencode.out")
 
-function webInfo(store: string): WebInfo | undefined {
+export function webInfo(store: string): WebInfo | undefined {
   const info = readJson<WebInfo | null>(webFile(store), null)
   if (info && alive(info.pid)) return info
   return undefined

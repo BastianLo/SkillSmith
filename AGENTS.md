@@ -55,7 +55,7 @@ bin/skillsmith.ts            CLI der eigenständigen Anwendung: run/start/stop/r
                              sonst /bin/sh <datei> … (ENOEXEC-Fallback). Die Argumente (`serve --port 0 …`)
                              werden durchgereicht; der aufgelöste Pfad landet als SKILLSMITH_OPENCODE_BIN in
                              der launchd-Plist.
-src/host/v1.ts               Hooks: config (11 Agenten, Permissions, 36 Befehle, skills.paths), tool,
+src/host/v1.ts               Hooks: config (11 Agenten, Permissions, 41 Befehle inkl. /prompt und /smith-pr-check, skills.paths), tool,
                              event (idle/error/status → SessionSignals), chat.message (Zähler, Modell merken,
                              „merk dir“ → rememberRequested, Hinweise), experimental.chat.messages.transform
                              (Hinweise injizieren), tool.execute.after (skill-Nutzung, Task: Antwort auffangen +
@@ -68,6 +68,7 @@ src/host/tools.ts            19 Lese-Tools (alle Agenten, inkl. skill_list, know
                              Wissens-Schreibtools hängen verwandte Einträge an; memorysmith_*, doctor_*
 src/host/commands.ts         30 Befehle (/smith-*, /skills-search|adopt, /knowledge, /glossary*, /errors*, /scripts*,
                              /docs-search, /history) + Dispatcher
+src/host/library-commands.ts /prompt (gefüllter Prompt als Nutzernachricht), /smith-pr-check
 src/host/memory-commands.ts  /memory, /remember, /forget, /resume, /smith-doctor, /smith-web; Report-Zeilen
 src/host/schema.ts           Arg-Specs → zod oder JSON-Schema
 
@@ -163,6 +164,19 @@ src/web/static/              index.html, style.css, js/*.js (ES-Module ohne Buil
                              vendor/: d3-force/d3-drag/d3-zoom/d3-selection (ISC; gebündelt als
                              `d3-force.min.js`), CodeMirror 6, uPlot 1.6.32, Mermaid 11.17.2,
                              highlight.js 11.11.1 (Lizenzen daneben) – gebaut mit tools/vendor/build.sh
+src/core/anchors.ts          Code-Anker: parse, locate (Java/Kotlin/TS), pin, Prüfung nach Commits, Job anchors
+src/core/provenance.ts       Herkunft je Absatz (Absätze, Quellen, Status belegt/unbelegt/veraltet)
+src/core/quality.ts          Qualitätswert 0–100 je Eintrag
+src/core/crosscheck.ts       Kreuzprüfung durch ein zweites Modell (Ops.crossGate)
+src/core/gym.ts              Gym: Aufgaben, A/B-Runden, Urteile
+src/core/scripts.ts          TypeScript-Laufzeit und -Prüfung, call_script, JSON-Schema-Prüfung
+src/core/library.ts          Snippets und Prompts: Platzhalter, /prompt, Kandidaten, Live-Templates
+src/core/review-knowledge.ts Review-Kommentare aus GitHub, Kandidaten, Vor-PR-Prüfung
+src/core/importer.ts         Dokument-Import: lesen, extrahieren, übernehmen
+src/core/local-ctx.ts        Kontext ohne opencode (smith-CLI)
+src/py/smith_script.py, src/ts/smith-script.ts   Helfer des call_script-Vertrags
+bin/smith(.ts)               smith-CLI
+integrations/intellij/       IntelliJ-Plugin (Quellen)
 src/core/redact.ts, skill.ts, context.ts, config.ts, log.ts, types.ts, util/{fs,text}.ts
 ```
 
@@ -280,7 +294,21 @@ Python-Umgebung wird in `state/python.json` 24 h gecacht (`/scripts-test` erneue
 - **Eingang** (`src/core/inbox.ts`): Modus je Meldungsart `an | gebuendelt | aus` (`inbox.types`, auch `change.<smith>`), Wegklicken mit Inhalts-Signatur (`state/inbox.json`), Zähler zählt Bündel einmal.
 - **Navigation** (`static/js/nav.js`): ein Register für Bereiche, Routen, Tabs und Palette – neue Seiten nur dort eintragen. Dialoge schließen beim Seitenwechsel (`closeModals`).
 - **Workflow je Spalte** (`src/core/workflow.ts`, `task-fields.ts`, `agent-steps.ts`, `agent-tasks.ts`, `agent-defs.ts`): Fluss einer Spalte = Standard aus der Spalten-Id ⊕ `tasks.flow` ⊕ `flow` des Projekts (Schritt plan/implement/test/verify, Agent, Modell, Prüfungen, onSuccess/onFailure, Tor, maxLoops). Auftrag: `phase` (starting/working/checking/waiting/halted/accepted/discarded/aborted/error), `step`, `column`, `waitingFor` (plan/gate/accept/tests/manual), `loops`, `stepRuns`, `sessionsByAgent`, `testRuns`. Felder der Aufgabe im Frontmatter: `criteria`, `testcases`, `plan`, `verification` – geschrieben vom Plugin aus den Antworten der Agenten (eigener Lauf, Commit), nie vom Agenten. Schreibrechte nur für die aktuelle Umsetzungs-Session; Verifikation bekommt `tools` aus (schreibt nie). Befehls-Testfälle laufen als Ad-hoc-Pipeline-Lauf (`commandTests`). **Schritte, die eine Nutzeraktion startet, laufen als `run.followUps` nach `finalizeRun`** – sonst warten ihre eigenen Läufe (Karte verschieben, Ergebnisse schreiben) auf den Claim des noch offenen Nutzerlaufs auf dieselbe Aufgabe. Art `agent` im Store: `registerAgents()` im config-Hook (Store gewinnt, leerer Prompt überschreibt nie), `importAgents()`, Job `agent-review` → Vorschlag mit Diff (KI-Recht „vorschlag“). Alte Aufträge (`upgradeJob`) und Spalten (`migrateTaskColumns`) werden beim Start übernommen.
-- **Noch offen in Phase 5:** 5c Code-Anker/Herkunft/Qualitätswert, 5d Kreuzprüfung und Gym, 5e Node/TS-Skripte, 5f Review-Wissen aus GitHub + Vor-PR-Prüfung (Prüfung `pr-check` ist im Workflow vorgesehen, wirkt noch nicht), 5g CLI-Befehle, 5h Dokument-Import, 5j Snippet-/Prompt-Bibliothek.
+- **Noch offen in Phase 5:** Menüleisten-App (5i, Weg A Tauri / Weg B Web-App) – bewusst zurückgestellt; das IntelliJ-Plugin liegt nur als Quellcode vor (`integrations/intellij`, ungebaut).
+
+### Phase 5 (Teil 2): Qualität, Bibliothek, Import, CLI
+
+- **5c Code-Anker** (`src/core/anchors.ts`): `[[code:pfad]]`, `[[code:Klasse]]`, `[[code:Klasse#methode]]`, `[[code:pfad#L4-L9]]` (maskCode: nie in Code-Blöcken). `Ops.contentMeta()` pinnt bei jedem create/update/patch über `setAnchorPin` (Record: ref, project, path, kind, symbol/member/lines, signature, `codeHash` whitespace-unabhängig, `commit` = HEAD des Projekt-Repos) in `meta.anchors`; bestehende Records bleiben (der Hash ändert sich erst mit „Passt noch“ bzw. `repinAnchors`). Auflösung per Muster (`locate`: Typ-/Member-Deklaration, Klammerzählung ohne Strings/Kommentare, Python-Einrückung) in `home_path` der Projekte, dann Worktree. Job `anchors` (Start, alle 15 min): verankert alte Texte (ein Lauf `docsmith(curator): anchor …`), prüft nur bei geänderten HEADs oder Pins (`state/anchors.json`: Status je Ref, vorher aus `git show <commit>:<pfad>`, nachher, Umbenennung über `git diff -M`/`status`). Eingang `code-changed`, Aktionen `anchor.accept` (repin, `Ops.setAnchors`, Aktion `anchor`), `anchor.fix` (Vorschlag wie `doc.check`, KI-Recht gilt), `anchors.check`. `[[code:…]]` zählt nie als defekter Link; Graph: Knoten `code:<projekt>/<pfad>`, abgeleitete Kante `references`.
+- **Herkunft** (`src/core/provenance.ts`): `meta.provenance` = Absatz-Hash → Quellen (`ProvenanceSource`: type, ref, quote, scope paragraph|change). Absätze: Leerzeilen-Blöcke, Code-Fences und Überschriften neutral. `nextProvenance` behält Quellen unveränderter Absätze; geänderte bekommen `sources` des Agenten (je Absatz verifiziert: Zitat im Haystack bzw. Ref im Transkript, `code` nur mit Anker im Text) oder den Nachweis der Änderung; Nutzer-Läufe = `user`. `provenance.perParagraph` (aus|warnen|pflicht). Merge vererbt Quellen. `Ops.addSource` (nur Nutzer). Alte `meta.evidence` zählen nur, wenn ihr Zitat im Absatz steht.
+- **Qualitätswert** (`src/core/quality.ts`, `ctx.quality`): Teile belegt/frische/hinweise/zweifel/anker/gym, fehlende Teile werden umgewichtet; Cache je Store-Revision. API `entry` liefert `anchors`, `provenance`, `quality`; Listen `quality`. Hinweise sortieren starke Treffer nach `score·(1+hintBoost·(q/100−0,5))`. Eingang `low-quality`.
+- **5d Kreuzprüfung** (`src/core/crosscheck.ts`): `Ops.crossGate` nach `contentMeta` für Hintergrund-Agenten (reviewer/curator) und Arten `crosscheck.kinds`, nur mit `crosscheck.model` (≠ Schreibermodell). Absatz ohne Quelle → nicht gestützt ohne Modell. widersprochen → GuardError + `run.rejections`; nicht gestützt/Fehler → `divert(…, forceStage)`. Statistik `state/crosscheck.json` (smith|Schreiber|Prüfer).
+- **Gym** (`src/core/gym.ts`): Aufgaben versioniert `gym/<id>.json` (SystemTarget `gym`), Prüfungen contains/order/executed/exit0/output_equals, `leaks()` sperrt verratene Lösungen, `propose()` aus dem Session-Verlauf (Status vorgeschlagen). Runde: `runsPerArm` × A (ohne) / B (Prompt + Hinweisblock), `runAgentSession` mit `tools` (`*_*`, webfetch, task, skill aus; fragen/lesen ohne Schreib-Tools; arbeiten im `git worktree --detach`), Auswertung aus den Session-Nachrichten. Urteil `verdictOf`, Runden in `state/gym.json`, `gym.consequence: archivieren` erst nach 2 „schadet“ an verschiedenen Tagen (Wissen/Glossar nur aus den Hinweisen: `suppressed`). Job `gym` bei Leerlauf. `runAgentSession` kann jetzt `tools` und `query` übergeben.
+- **5e Skripte** (`src/core/scripts.ts`): `fields.language` (python|typescript), `scriptFiles(name, language)` (`<m>.ts` + `<m>.test.ts`), `nodeEnv()` (node mit Type Stripping, sonst `process.execPath` mit `BUN_BE_BUN=1`, 24 h in `state/node.json`), `checkTsSource` (enum, namespace, Parameter-Properties, `import = require`, relative Importe ohne Endung; Fähigkeiten aus Importen), `checkTsDraft` (Tests `node --test`/`bun test`, `--help`, gleiche Sandbox-Regeln). `callScript`: Schema-Prüfung (`validateSchema`, Teilmenge), Helfer `src/py/smith_script.py` bzw. `src/ts/smith-script.ts` in ein Temp-Verzeichnis kopiert, JSON auf stdin, Hülle auf stdout; ohne Schema `args`. Werkzeug `call_script` (nicht in `READ_TOOLS`, also nicht für Hintergrund-Agenten), Aktion `script.run` (strongToken pipeline).
+- **5j Bibliothek** (`src/core/library.ts`): Arten `snippet` (`snippets/<tier>/<name>.md`, Code im ersten Fence, `${name[:standard]}`) und `prompt` (`prompts/…`, `{{var}}`, agent/model). `/prompt` (host `library-commands.ts`): ersetzt in `command.execute.before` die Parts durch den gefüllten Text (ohne INTERNAL_PREFIX). Kontextwerte: branch, ticket, projekt, datum, aufgabe. `state/library.json`: Nutzung/Bewertung je Prompt-Version, Code aus edit/write (≥ 5 Zeilen, Hash) → Kandidat ab `recurrenceMinSessions` Sessions (Eingang `snippet-candidate`, `snippet.adopt`). Hinweise: Abschnitt „Snippets“. `{{prompt:name}}` in Agenten-Prompts (`registerAgents`). Job `prompt-review`. Live-Templates-Export.
+- **5f Review-Wissen** (`src/core/review-knowledge.ts`): Job `review-extract` (täglich): `gh api` oder MCP-Session (nur lesend, `tools`), Kommentare in `state/reviews.json`, `cluster()` (Kosinus der gestemmten Terme ≥ `reviews.similarity`, Union-Find), Kandidat ab `minComments`/`minPersons`; `confirm` → `memorySave` vorgabe (Tag `review`) bzw. Skill + Quellen `comment`; `reject` merkt. `prCheck(dir, base)`: `git diff <merge-base>` gegen `rules()` in einer Assistent-Session → Befunde; Workflow-Prüfung `pr-check` in `AgentTasks.verifyDone`, `/smith-pr-check`, Aktion `review.prCheck`.
+- **5h Import** (`src/core/importer.ts`): `POST /api/import` (octet-stream, `import.maxMB`) → `import.create`; `readPages` (PDF: JSON der Seiten aus pdf.js im Browser, `vendor/pdf.min.mjs` + Worker; DOCX/PPTX: eigener ZIP-Leser + XML; DOC: textutil; MD/TXT), Abschnitte à `import.chunkChars`, Hintergrund-Extraktion je Abschnitt (`askAssistant`), `parseFindings` verwirft Zitate, die nicht im Abschnitt stehen; `enrich`: ähnlicher Eintrag (≥ 0,6), Kreuzprüfung. Zustand `state/imports/<id>/import.json` + Original; Bus `import.progress`. `apply` = ein Lauf: Wissen in `import/<datei>` (KI-Recht je Import), Glossar-/Skill-Kandidaten, Vorgaben, Entscheidungen (vorgeschlagen), Aufgaben-Vorschläge, „ergänzt Eintrag X“; Quelle `file` je Absatz; Original als Anhang bis `import.storeMaxMB`.
+- **5g CLI** (`bin/smith`, `bin/smith.ts`): Web-API mit Token aus `state/web.json` (jetzt 0600), sonst `createLocalCtx()` (`src/core/local-ctx.ts`, Store direkt, kein Modell – nur unter Bun, weil die Quellen ohne Dateiendungen importieren). Store-Auflösung aus `bin/skillsmith.ts` (`resolveStore`, `webInfo` exportiert).
+- **5i IntelliJ** (`integrations/intellij`): Kotlin, IntelliJ Platform Gradle Plugin 2.x; nutzt `GET /api/code`, `/board`, `/jobs`, `/inbox`, Aktionen `doc.create`, `snippet.fill`, `error.lookup` (neu: Fehlertext → Signatur, bekannte Lösung, Vorkommen).
 
 ### Parallelität und Locks
 
@@ -345,7 +373,7 @@ Neuer Adapter `src/host/v2.ts`; zu prüfen: `cfg.skills` (Array), Agent-/Command
 ```bash
 cd skillsmith
 bun install                                   # nur Entwicklung (Typen, SDK für E2E)
-bun test test/unit                            # 188 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
+bun test test/unit                            # 213 Unit-Tests (Embeddings mit Fake-Endpunkt, offline)
 npx tsc --noEmit                              # strikte Typprüfung
 SKILLSMITH_TEST_PYTHON=/pfad/python3.9 bun test test/unit/smiths-flow.test.ts -t toolsmith   # Werkstatt mit Python 3.9
 OPENCODE_BIN=$(which opencode) bun test/e2e/run.ts   # E2E (107 Prüfungen, ~8 min)
@@ -357,6 +385,8 @@ DEMO_URL=… PLAYWRIGHT_CORE=… bun test/web/ui-flows.ts shots   # Schreib-Abl�
 tools/vendor/build.sh                         # Vendor-Bibliotheken neu bauen (nur bei Versionswechsel)
 ```
 
+Phase 5 Teil 2 (Unit, je Schritt bewusst knapp): `phase5-quality.test.ts` (Anker Java/TS, Pin, geändert/verschoben/gelöscht, Passt noch, Herkunft, Qualitätswert), `phase5-gym.test.ts` (Kreuzprüfungs-Tor, Gym-Prüfungen, A/B-Runde mit Fake-Client), `phase5-scripts.test.ts` (TS-Prüfung, echter TS-Entwurf, call_script), `phase5-library.test.ts`, `phase5-reviews.test.ts`, `phase5-import.test.ts`. UI-Smoke enthält die neuen Seiten, UI-Flows „Passt noch“.
+
 Phase 4 (Unit): `phase4-actions.test.ts` (Katalog, Speichern mit Basisversion/409, Bestätigungen/428, Undo, Umbenennen mit Link-Nachzug, KI-Recht in Ops/Suche/Hinweisen, Vorschläge, Anhänge, Ordner, Vorlagen, Token-Pflicht, Lese-Sperre, Audit mit Hash-Kette), `phase4-insight.test.ts` (Metriken, Relevanz, Versionen/Diff, Links/Rückverweise, Export), `phase4-work.test.ts` (Aufgaben, WIP, Unteraufgaben, Checklisten, memorysmith-Vorschläge, `/task` `/note`, Pipeline mit JUnit/Schwärzung/Zeitlimit/Warteschlange, kompletter Agenten-Ablauf mit Fake-Client inkl. Guard über Subagenten, Nachbessern, Review, Merge, Regeln; Eingang, Simulator, Landkarte, Graph-Pfad/-Zeitreise).
 
 Unit-Tests: Store/Ops/Gates aller Arten, Frontmatter-Roundtrip, Migration, Suche, Git (Smith-Betreff, Undo), Signale (Fehler-Normalisierung, Ketten, Abkürzungen, Automatisierung, Code-Änderungen, Doku-Scan), Live-Fehlerhinweis, Werkstatt mit echtem Python (Check, Fehlerfälle, Freigabe riskanter Skripte), Agent-Runner (Modell, Config-Fehler, sofortiges Ende bei Fehler), Queue (Config-Fehler nie verworfen), Router, Curator je Art, Lese-Tools (inkl. Listen-Tools), Befehle (Glossar-Import/Export). `rag.test.ts`: MiniIndex/RRF, Markdown-Abschnitte, `docs_search` + docsmith-Kontext (BM25 und semantisch), Nachweis aus `docs_search`, verwandte Einträge/Flag/Doubts, semantische Curator-Cluster und Widerspruchs-Paare, Tag-Varianten/-Plan/-Synonyme/Curator-Vereinheitlichung mit Commit, Session-Verlauf (Merge, Hinweis BM25 und semantisch, `history_search`, `/history`, Aufbewahrung, Datensatz aus `reviewSession`). `vector-store.test.ts`: beide Ablagen (Persistenz, zwei Prozesse, Löschen), SQLite schreibt nur Änderungen, sieht fremde Änderungen ohne Neuöffnen, Migration der Dateien, beschädigte Datenbank, Fallback. `memory.test.ts`: Scope/Remote-Normalisierung, MemoryDb (Stände mit Verlauf, Ergebnisse, Captures, Konflikte, geprüfte Paare), Gates (Vorgabe nur mit Nutzerzitat, Entscheidung vorgeschlagen, kein Nachweis → abgelehnt), gleiches Thema = update, Ablösung, Projekttrennung, lokale Aktionen ohne Commit, Beziehungen (eine pro Paar, symmetrisch, flüchtiges Ende), abgeleitete Kanten, Doktor (Queue, Scan per BM25, Urteile über Tools, erneut geprüft nur bei Änderung, Konflikt → Nutzer → `/smith-doctor resolve`), Stand-Block (einmal, nur Hauptsession, Kürzung), Captures im Review, Lese-Tools, Befehle, Lebenszyklus. `web.test.ts`: Host/Origin/Token/nur GET/CSP/Pfade, Eintrag mit allen Beziehungen beider Richtungen, Graph-Filter, Suche, Start/Stopp mit echtem Server.
@@ -367,7 +397,7 @@ E2E (`test/e2e/run.ts`): isoliertes HOME, v1-Store als Ausgangslage, globales `m
 
 - Neue aktive Skills erscheinen in opencodes Skill-Liste erst nach Neustart.
 - Embeddings optional; alle semantischen Funktionen (Suche, Hinweise, Kandidaten, Duplikate, Fehler, Curator-Cluster, Projekt-Doku, Widerspruchs-Check, Tags, frühere Sessions) haben einen BM25-/lexikalischen Weg.
-- Gym (A/B-Prüfung, ob Einträge wirklich helfen): geplant, noch nicht umgesetzt.
+- Gym: Modus „arbeiten“ hat keine sandbox-exec für die Shell des Agenten (opencode führt bash selbst aus); Folgen anfangs nur als Bericht.
 - Pipeline und Agenten-Aufträge laufen im opencode-Prozess; ohne laufendes opencode passiert nichts (unterbrochene Läufe werden beim Start markiert). Die Standalone-CLI (`bin/skillsmith.ts`) hält dafür `opencode serve` headless am Laufen – Voraussetzung bleibt ein opencode-Prozess, nur ohne TUI.
 - Board-Reihenfolge und Arbeitsstände sind lokal (kein Commit); Kurz-IDs der Aufgaben zählen je Store.
 - Arbeitsstände/Ergebnisse sind pro Rechner (state/); Team-Sync wäre ein eigener Schritt.

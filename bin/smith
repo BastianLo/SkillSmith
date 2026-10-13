@@ -1,0 +1,18 @@
+#!/usr/bin/env node
+/**
+ * Launcher for the smith CLI (5g): skillsmith from any terminal. Resolves its own real path
+ * (symlink-safe) and runs bin/smith.ts – with node ≥ 22.18 (type stripping) or with the Bun
+ * inside opencode: BUN_BE_BUN=1 opencode …/bin/smith.ts.
+ */
+import { dirname, join } from "node:path"
+import { fileURLToPath } from "node:url"
+import { realpathSync } from "node:fs"
+
+const here = dirname(realpathSync(fileURLToPath(import.meta.url)))
+const { run } = await import(join(here, "smith.ts"))
+try {
+  process.exit(await run(process.argv.slice(2)))
+} catch (err) {
+  console.error(`Fehler: ${err instanceof Error ? err.message : String(err)}`)
+  process.exit(1)
+}

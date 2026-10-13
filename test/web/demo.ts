@@ -18,6 +18,27 @@ import { JobScheduler } from "../../src/core/jobs"
 import { createLogger, withLogContext } from "../../src/log"
 import { BODY, ERROR_BODY, cmdRun, makeCtx, makeRun, tmp } from "../unit/helpers"
 
+const TOKEN_STORE = `package de.shop.auth;
+
+import java.util.Set;
+
+public class TokenStore {
+  private final Set<String> revoked;
+
+  public TokenStore(Set<String> revoked) {
+    this.revoked = revoked;
+  }
+
+  public void revoke(String id) {
+    revoked.add(id);
+  }
+
+  public String find(String id) {
+    return revoked.contains(id) ? null : id;
+  }
+}
+`
+
 const port = Number(process.argv[2] || process.env.DEMO_PORT || 47555)
 const DAY = 86_400_000
 
@@ -151,6 +172,7 @@ async function main() {
   g("init", "-q", "-b", "main")
   mkdirSync(join(home, "src"), { recursive: true })
   writeFileSync(join(home, "src", "LoginController.java"), "class LoginController {}\n")
+  writeFileSync(join(home, "src", "TokenStore.java"), TOKEN_STORE)
   writeFileSync(join(home, ".gitignore"), "target/\n")
   writeFileSync(join(home, "ci.sh"), `#!/bin/sh\nmkdir -p target/surefire-reports\nprintf '<testsuite tests="3" failures="0"><testcase classname="de.shop.LoginTest" name="login"/><testcase classname="de.shop.LoginTest" name="logout"/><testcase classname="de.shop.TokenTest" name="revoke"/></testsuite>' > target/surefire-reports/TEST-login.xml\necho "[INFO] Tests run: 3, Failures: 0"\n`)
   g("add", "-A")
@@ -252,6 +274,32 @@ async function main() {
   await web("agent.approve", { job, answers: "Sollen alle Geräte abgemeldet werden?\n→ Ja, alle Geräte." })
   await until((j) => j?.phase === "waiting" && j.waitingFor === "tests")
   ctx.agentTasks.start()
+
+  // 5c: knowledge anchored in code (one anchor changes after a commit), provenance per paragraph
+  await web("doc.create", { title: "Refresh-Token sperren", folder: "architektur", description: "Wo und wie der Logout das Refresh-Token sperrt", tags: ["auth"], body: "## Sperre\nBeim Logout ruft der Controller [[code:TokenStore#revoke]] auf; das setzt `REVOKED_AT`.\n\n## Suche\n[[code:TokenStore#find]] liefert gesperrte Tokens nicht mehr aus.\n\nDatei: [[code:src/TokenStore.java]]" })
+  writeFileSync(join(home, "src", "TokenStore.java"), TOKEN_STORE.replace("    revoked.add(id);", "    revoked.add(id);\n    audit.log(\"revoke\", id);"))
+  g("commit", "-qam", "audit revoke")
+  await ctx.anchors!.runJob("Start")
+  const hay = "Nutzer: Das Gateway cached geprüfte Tokens 60 Sekunden. Tool: JwtFilter.java: CACHE_TTL = Duration.ofSeconds(60); Revocations werden erst nach Ablauf des Caches wirksam."
+  const rv = makeRun(ctx, "reviewer", { smith: "docsmith", userText: hay, haystack: hay, limits: { maxNew: 2, maxChanges: 5, maxNotes: 2 } })
+  await ctx.ops.create(rv, "knowledge", { name: "gateway-token-cache", title: "Token-Cache im Gateway", description: "Geprüfte Tokens werden 60 Sekunden gecacht", tags: ["auth", "gateway"], body: "## Cache\nDas Gateway cached geprüfte Tokens 60 Sekunden.\n\n## Folge\nEine Sperre wirkt erst nach Ablauf des Caches.\n\n## Offen\nOb der Cache je Pod oder zentral liegt, ist nicht belegt.", evidence: "Das Gateway cached geprüfte Tokens 60 Sekunden", sources: [{ paragraph: "Eine Sperre wirkt erst", evidence: "Revocations werden erst nach Ablauf des Caches wirksam" }] })
+  await finalizeRun(ctx, rv, { ok: true })
+
+  // 5d–5j: gym task, snippet, prompt, review candidates, an import (findings without model)
+  await web("entry.create", { kind: "snippet", title: "SLF4J-Logger", description: "Logger-Feld einer Klasse", tags: ["java", "logging"], body: "```java\nprivate static final Logger ${name:log} = LoggerFactory.getLogger(${klasse}.class);\n```" })
+  await web("entry.create", { kind: "prompt", name: "review-diff", title: "Diff reviewen", description: "Diff gegen die Vorgaben des Teams prüfen", tags: ["review"], body: "Prüfe {{auswahl}} für Ticket {{ticket}} auf Branch {{branch}} gegen unsere Vorgaben.", fields: { agent: "build" } })
+  await web("gym.task.save", { entry: "knowledge:refresh-token-sperren", prompt: "Wie wird beim Logout das Refresh-Token gesperrt?", mode: "fragen", checks: [{ type: "contains", text: "REVOKED_AT" }] })
+  await ctx.reviews!.add(["Bitte keine Field Injection mit @Autowired.", "Constructor Injection statt @Autowired Field Injection.", "Field Injection @Autowired vermeiden."].map((body, i) => ({ id: `acme/portal#${i + 1}`, repo: "acme/portal", pr: 10 + i, author: i % 2 ? "ben" : "anna", body, path: "src/LoginController.java", line: 12, url: `https://github.com/acme/portal/pull/${10 + i}`, at: new Date().toISOString() })))
+  await ctx.reviews!.bundle()
+  const imp = await ctx.importer!.create("Konzept Logout.md", new TextEncoder().encode("# Ablauf\nBeim Logout wird das Refresh-Token gesperrt und der Gateway-Cache geleert.\n\n# Offene Punkte\nMehrgeräte-Logout mit dem Fachbereich klären."))
+  const st = ctx.importer!.get(imp.id)!
+  st.status = "fertig"
+  st.sections = st.sections.map((x) => ({ ...x, done: true }))
+  st.findings = [
+    { index: 0, type: "wissen", title: "Logout sperrt das Refresh-Token", text: "Beim Logout wird das Refresh-Token gesperrt und der Gateway-Cache geleert.", quote: "Beim Logout wird das Refresh-Token gesperrt", page: 1, selected: true, similar: { id: "knowledge:refresh-token-sperren", title: "Refresh-Token sperren", score: 0.71 } },
+    { index: 1, type: "offen", title: "Mehrgeräte-Logout klären", text: "Mehrgeräte-Logout mit dem Fachbereich klären.", quote: "Mehrgeräte-Logout mit dem Fachbereich klären", page: 2, selected: true },
+  ]
+  require("node:fs").writeFileSync(require("node:path").join(ctx.store.stateDir, "imports", imp.id, "import.json"), JSON.stringify(st))
 
   // metrics over 90 days (charts, calendar, heatmap, tools)
   const m = ctx.metrics!

@@ -1,8 +1,9 @@
-import { get } from "../api.js"
+import { get, saveBlob } from "../api.js"
+import { qualityChip } from "../quality.js"
 import { AI_ACCESS, KIND_PLURAL, MEMORY_PLURAL, aiChip, debounce, entryHref, fmtRel, h, icon, kindChip, put, select, statusChip, swap, tagChips } from "../dom.js"
 import { act, app, promptDialog } from "../ui.js"
 
-const NEW_ROUTE = { knowledge: "#/neu/dokument", skill: "#/neu/skill", error: "#/neu/fehler", glossary: "#/neu/glossar", memory: "#/neu/erinnerung", task: "#/board?neu=1", project: "#/projekt-neu", script: "#/werkstatt?neu=1", agent: "#/neu/agent" }
+const NEW_ROUTE = { knowledge: "#/neu/dokument", skill: "#/neu/skill", error: "#/neu/fehler", glossary: "#/neu/glossar", memory: "#/neu/erinnerung", task: "#/board?neu=1", project: "#/projekt-neu", script: "#/werkstatt?neu=1", agent: "#/neu/agent", snippet: "#/neu/snippet", prompt: "#/neu/prompt" }
 
 /** One row of an entry list (also used by search and documents). */
 export function entryRow(n, { selectable, selected, onSelect, extra } = {}) {
@@ -27,7 +28,7 @@ export function entryRow(n, { selectable, selected, onSelect, extra } = {}) {
     h(
       "div",
       { class: "meta" },
-      h("div", { class: "row-flex", style: { gap: "4px", justifyContent: "flex-end" } }, n.own ? h("span", { class: "chip accent", text: "von mir" }) : null, n.ai && n.ai !== "frei" ? aiChip(n.ai) : null, statusChip(n.status), n.pinned ? icon("pin", 12) : null),
+      h("div", { class: "row-flex", style: { gap: "4px", justifyContent: "flex-end" } }, n.own ? h("span", { class: "chip accent", text: "von mir" }) : null, n.ai && n.ai !== "frei" ? aiChip(n.ai) : null, statusChip(n.status), qualityChip(n.quality), n.pinned ? icon("pin", 12) : null),
       n.tier && n.tier !== "active" ? h("div", { text: n.tierLabel || n.tier }) : null,
       n.folder ? h("div", { class: "mono", text: n.folder }) : null,
       n.date ? h("div", { text: fmtRel(n.date) }) : null,
@@ -123,6 +124,7 @@ export default async function lists(ctx) {
     h("span", { class: "grow" }),
     kind === "agent" && !app.readOnly ? h("button", { class: "btn", type: "button", title: "Die Agenten aus opencode.json und den Agent-Dateien als erste Version in den Store übernehmen (KI-Recht „Vorschlag“)", onclick: async () => (await act("agent.import", {})) && load() }, icon("import", 14), "Aus opencode übernehmen") : null,
     NEW_ROUTE[kind] && !app.readOnly ? h("a", { class: "btn primary", href: NEW_ROUTE[kind] }, icon("plus", 14), "Neu") : null,
+    kind === "snippet" ? h("button", { class: "btn", type: "button", onclick: async () => saveBlob(new Blob([(await get("library/live-templates")).xml], { type: "application/xml" }), "skillsmith-live-templates.xml") }, icon("export", 14), "IntelliJ-Live-Templates") : null,
   )
   const head = h("h1")
   put(page, head, bar, bulk.el, listEl)

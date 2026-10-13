@@ -3,6 +3,13 @@
  * live event bus. Created the same way by the host adapter and the unit tests.
  */
 import { AgentTasks } from "./agent-tasks"
+import { Anchors } from "./anchors"
+import { QualityEngine } from "./quality"
+import { CrossCheck } from "./crosscheck"
+import { Gym } from "./gym"
+import { Library } from "./library"
+import { ReviewKnowledge } from "./review-knowledge"
+import { Importer } from "./importer"
 import { AuditLog } from "./audit"
 import { EventBus } from "./bus"
 import type { Ctx } from "./context"
@@ -29,6 +36,16 @@ export function attachServices(ctx: Ctx, Database?: DatabaseClass, rawOptions: u
   ctx.pipeline = new Pipeline(ctx)
   ctx.tasks.pipelineStatus = (name) => ctx.pipeline.badge(name)
   ctx.agentTasks = new AgentTasks(ctx)
+  ctx.anchors = new Anchors(ctx)
+  ctx.ops.setAnchorPin((text, previous, repin) => ctx.anchors!.pin(text, previous, repin))
+  ctx.quality = new QualityEngine(ctx)
+  ctx.crosscheck = new CrossCheck(ctx)
+  ctx.ops.setCrossCheck(ctx.crosscheck)
+  ctx.gym = new Gym(ctx)
+  ctx.library = new Library(ctx)
+  ctx.reviews = new ReviewKnowledge(ctx)
+  ctx.importer = new Importer(ctx)
+  ctx.quality.gym = (id) => ctx.gym?.verdict(id)
   ctx.tasks.agentStatus = (name) => ctx.agentTasks.statusOf(name)
   ctx.audit = new AuditLog(ctx.store.stateDir, ctx.options, ctx.log.child("audit"), Database)
   if (!ctx.audit.available) ctx.audit = undefined

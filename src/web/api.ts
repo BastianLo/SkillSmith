@@ -12,9 +12,10 @@ import type { Ctx } from "../core/context"
 import { str, strArray } from "../core/frontmatter"
 import { isStoreId, nodeLabel, RELATION_LABEL, type GraphEdge, type GraphNode } from "../core/graph"
 import { graphAt, semanticMap, shortestPath } from "../core/graph-extra"
-import { aiAccessOf, isOwnDoc, meaningsOf, MEMORY_TYPE_LABEL, scriptFiles, spec, TIER_LABEL } from "../core/kinds"
+import { aiAccessOf, isOwnDoc, meaningsOf, MEMORY_TYPE_LABEL, scriptFiles, scriptLanguage, spec, TIER_LABEL } from "../core/kinds"
 import { M } from "../core/metrics"
 import { inbox, markVisited } from "../core/inbox"
+import { provenanceView, PROVENANCE_KINDS } from "../core/provenance"
 import { projectPage, sessionPage, simulateHints, ticketPage } from "../core/productivity"
 import { radiusOf, storeExtras } from "../core/relevance"
 import { templates } from "../core/templates"
@@ -200,8 +201,8 @@ export class ReadApi {
       case "workshop": {
         const e = ctx.store.getOwned("script", q.get("name") ?? "")
         if (!e) throw new NotFound("Skript nicht gefunden")
-        const f = scriptFiles(e.name)
-        return { name: e.name, description: e.description, usage: str(e.fields.usage), capabilities: strArray(e.fields.capabilities), requirements: strArray(e.fields.requirements), tags: e.tags, docs: e.body, code: ctx.store.readFileOf(e, f.code) ?? "", tests: ctx.store.readFileOf(e, f.test) ?? "", test: e.meta?.test ?? null, runs: entryUsage(ctx, `script:${e.name}`, 90) }
+        const f = scriptFiles(e.name, scriptLanguage(e))
+        return { name: e.name, language: scriptLanguage(e), params: e.fields.params ?? null, result: e.fields.result ?? null, description: e.description, usage: str(e.fields.usage), capabilities: strArray(e.fields.capabilities), requirements: strArray(e.fields.requirements), tags: e.tags, docs: e.body, code: ctx.store.readFileOf(e, f.code) ?? "", tests: ctx.store.readFileOf(e, f.test) ?? "", test: e.meta?.test ?? null, runs: entryUsage(ctx, `script:${e.name}`, 90) }
       }
       case "exports":
         return this.exports()
@@ -302,7 +303,7 @@ export class ReadApi {
       tierLabel: n.tier ? (TIER_LABEL[n.tier] ?? n.tier) : null,
       project: n.projectName || n.project || null,
       date: n.date ?? null,
-      ...(e ? { own: isOwnDoc(e), ai: aiAccessOf(e), folder: e.folder ?? null, pinned: !!e.meta?.pinned } : {}),
+      ...(e ? { own: isOwnDoc(e), ai: aiAccessOf(e), folder: e.folder ?? null, pinned: !!e.meta?.pinned, quality: PROVENANCE_KINDS.includes(e.kind) ? (this.ctx.quality?.of(e).score ?? null) : null } : {}),
       ...extra,
     }
   }
@@ -497,6 +498,24 @@ export class ReadApi {
       owned: e?.owned ?? null,
       pinned: !!e?.meta?.pinned,
       task: e?.kind === "task" ? ctx.tasks.view(e) : null,
+      ...(e ? this.qualityView(id, e) : {}),
+    }
+  }
+
+  /** Code anchors, provenance per paragraph and the quality score of an entry (5c). */
+  private qualityView(id: string, e: Entry): Record<string, unknown> {
+    const ctx = this.ctx
+    const status = ctx.anchors?.statusOf(id) ?? []
+    const anchors = (e.meta?.anchors ?? []).map((a) => {
+      const st = status.find((x) => x.ref === a.ref)
+      return { ...a, status: st?.status ?? null, newPath: st?.newPath ?? null, note: st?.note ?? null, before: st?.before ?? null, after: st?.after ?? null }
+    })
+    const own = isOwnDoc(e)
+    const provenance = PROVENANCE_KINDS.includes(e.kind) ? provenanceView(e, { anchors: status, own, exists: (x) => !!this.entryOf(x) }) : null
+    return {
+      anchors,
+      provenance: provenance ? { counts: provenance.counts, share: provenance.share ?? null, own, paragraphs: provenance.paragraphs.map((p) => ({ index: p.index, key: p.key, line: p.line, status: p.status, neutral: p.neutral, text: truncate(p.text, 400), sources: p.sources, fromHistory: !!p.fromHistory, reason: p.reason ?? null })) } : null,
+      quality: PROVENANCE_KINDS.includes(e.kind) ? (ctx.quality?.of(e) ?? null) : null,
     }
   }
 

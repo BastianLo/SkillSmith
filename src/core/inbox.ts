@@ -50,6 +50,10 @@ export const INBOX_TYPES: InboxTypeDef[] = [
   { type: "improve", group: "Zuerst verbessern", label: "zuerst verbessern", description: "Viel genutzt, aber mit Problemen – lohnt sich zuerst." },
   { type: "error-prone", group: "Fehleranfällig", label: "fehleranfällige Einträge", description: "Einträge, bei deren Einsatz oft Probleme auftraten." },
   { type: "test", group: "Rote Skript-Tests", label: "rote Skript-Tests", description: "Der Retest eines Skripts ist fehlgeschlagen." },
+  { type: "code-changed", group: "Code geändert", label: "Code geändert", description: "Verankerter Code ([[code:…]]) hat sich geändert, ist verschoben oder gelöscht – das Wissen dazu prüfen." },
+  { type: "low-quality", group: "Qualität prüfen", label: "niedriger Qualitätswert", description: "Ein Eintrag hat einen niedrigen Qualitätswert (unbelegte Absätze, alte Belege, Zweifel, gebrochene Anker)." },
+  { type: "review-candidate", group: "Vorgaben aus Reviews", label: "Vorgaben aus Reviews", description: "Ähnliche Review-Kommentare mehrerer Personen – als Vorgabe oder Skill übernehmen?" },
+  { type: "snippet-candidate", group: "Snippet-Vorschläge", label: "Snippet-Vorschläge", description: "Derselbe Code kam in mehreren Sessions vor – als Snippet übernehmen?" },
   { type: "broken-link", group: "Defekte Links", label: "defekte Links", description: "Ein [[Link]] zeigt auf einen Eintrag, den es nicht gibt." },
   { type: "abbreviation", group: "Offene Abkürzungen", label: "offene Abkürzungen", description: "Abkürzungen ohne bekannte Bedeutung." },
   { type: "project-doc", group: "Projekt-Doku prüfen", label: "Projekt-Doku prüfen", description: "docsmith hält eine Projekt-.md für veraltet." },
@@ -253,6 +257,46 @@ export function collect(ctx: Ctx, since: string): InboxItem[] {
   // broken links
   for (const b of ctx.links.broken().slice(0, 50)) {
     items.push({ id: `link-${b.from}-${b.target}`, type: "broken-link", group: "Defekte Links", title: `${label(b.from)}: ${b.raw}`, detail: `Ziel „${b.target}“ gibt es nicht`, target: b.from, severity: "info", actions: [] })
+  }
+  // code anchors whose code changed (last check of the job "anchors")
+  const anchorState = ctx.anchors?.state()
+  for (const [id, list] of Object.entries(anchorState?.entries ?? {})) {
+    for (const a of list) {
+      if (a.status === "unchanged" || a.status === "unresolved") continue
+      const what = a.status === "changed" ? "geändert" : a.status === "moved" ? `verschoben${a.newPath ? ` nach ${a.newPath}` : ""}` : "gelöscht"
+      items.push({
+        id: `anchor-${id}-${a.ref}`,
+        type: "code-changed",
+        group: "Code geändert",
+        title: `${label(id)}: ${a.ref}`,
+        detail: `Code ${what}${a.path ? ` (${a.path})` : ""}${a.note ? ` – ${a.note}` : ""}`,
+        target: id,
+        at: anchorState?.checkedAt,
+        severity: a.status === "deleted" ? "warn" : "info",
+        actions: [
+          ...(a.status !== "deleted" ? [{ action: "anchor.accept", label: "Passt noch", target: id, args: { ref: a.ref } }] : []),
+          { action: "anchor.fix", label: "Vom Agenten beheben lassen", target: id, args: { ref: a.ref } },
+        ],
+        data: { ref: a.ref, status: a.status, path: a.path, newPath: a.newPath, before: a.before, after: a.after },
+      })
+    }
+  }
+  // quality below the threshold
+  try {
+    for (const { entry, quality } of ctx.quality?.low(30) ?? []) {
+      items.push({ id: `quality-${entry.kind}:${entry.name}`, type: "low-quality", group: "Qualität prüfen", title: `${entry.title} (${quality.score})`, detail: quality.reasons.join(" · "), target: `${entry.kind}:${entry.name}`, severity: "info", actions: entry.kind === "knowledge" ? [{ action: "doc.check", label: "Jetzt prüfen lassen", target: `${entry.kind}:${entry.name}` }] : [] })
+    }
+  } catch {
+    // quality is optional
+  }
+  // review knowledge (5f): candidates for conventions
+  for (const c of ctx.reviews?.candidates("offen").slice(0, 20) ?? []) {
+    items.push({ id: `review-${c.id}`, type: "review-candidate", group: "Vorgaben aus Reviews", title: truncate(c.summary, 120), detail: `${c.comments.length} Kommentare von ${c.persons} Personen · ${c.repos.join(", ")}`, at: c.createdAt, severity: "info", actions: [{ action: "review.reject", label: "Ablehnen", args: { id: c.id } }], data: { candidate: c.id, open: `#/review-wissen?kandidat=${c.id}` } })
+  }
+  // repeated code → snippet (5j)
+  for (const c of ctx.library?.candidates().slice(0, 20) ?? []) {
+    const first = c.code.split("\n").find((l) => l.trim()) ?? ""
+    items.push({ id: `snippet-${c.id}`, type: "snippet-candidate", group: "Snippet-Vorschläge", title: truncate(first.trim(), 80), detail: `${c.language} · in ${c.sessions.length} Sessions`, at: c.last, severity: "info", actions: [{ action: "snippet.adopt", label: "Als Snippet übernehmen", args: { id: c.id, title: truncate(first.trim(), 60) || "Snippet" } }, { action: "snippet.dismiss", label: "Verwerfen", args: { id: c.id } }], data: { code: c.code } })
   }
   // agents
   items.push(...ctx.agentTasks.inboxItems())

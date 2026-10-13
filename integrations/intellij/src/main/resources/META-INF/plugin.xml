@@ -1,0 +1,34 @@
+<idea-plugin>
+  <id>de.skillsmith.intellij</id>
+  <name>skillsmith</name>
+  <vendor>skillsmith</vendor>
+  <description><![CDATA[
+    skillsmith in the IDE: gutter icons at classes and methods with anchored knowledge, decisions
+    or known errors; a tool window with the tasks of the current branch, agent jobs and waiting
+    approvals; "Als Wissen speichern" and "Code-Anker kopieren" for the selection; snippets from
+    the library; failing runs are looked up in errorsmith. Talks to the local skillsmith web API
+    (127.0.0.1, token from state/web.json).
+  ]]></description>
+  <depends>com.intellij.modules.platform</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <applicationService serviceImplementation="de.skillsmith.intellij.SmithSettings"/>
+    <applicationConfigurable parentId="tools" instance="de.skillsmith.intellij.SmithConfigurable" id="de.skillsmith.settings" displayName="skillsmith"/>
+    <codeInsight.lineMarkerProvider language="" implementationClass="de.skillsmith.intellij.AnchorLineMarker"/>
+    <toolWindow id="skillsmith" anchor="right" factoryClass="de.skillsmith.intellij.SmithToolWindow" icon="AllIcons.Nodes.Bookmark"/>
+    <notificationGroup id="skillsmith" displayType="BALLOON"/>
+  </extensions>
+
+  <projectListeners>
+    <listener class="de.skillsmith.intellij.RunErrorListener" topic="com.intellij.execution.ExecutionListener"/>
+  </projectListeners>
+
+  <actions>
+    <group id="skillsmith.EditorGroup" text="skillsmith" popup="true">
+      <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+      <action id="skillsmith.SaveAsKnowledge" class="de.skillsmith.intellij.SaveAsKnowledgeAction" text="Als Wissen speichern"/>
+      <action id="skillsmith.CopyAnchor" class="de.skillsmith.intellij.CopyAnchorAction" text="Code-Anker kopieren"/>
+      <action id="skillsmith.InsertSnippet" class="de.skillsmith.intellij.InsertSnippetAction" text="Snippet einfügen …"/>
+    </group>
+  </actions>
+</idea-plugin>

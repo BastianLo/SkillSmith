@@ -2,8 +2,9 @@ import { get, post } from "../api.js"
 import { AI_ACCESS, editHref, entryHref, fmtDate, graphHref, h, icon, kindOf, nameOf, put, swap } from "../dom.js"
 import { auditTab, conflictsBlock, entryHead, evidenceBlock, factsBlock, historyBlock, linksBlock, mdBlock, relationsBlock, relevanceLine, targetPicker, usageTab, versionsTab } from "../parts.js"
 import { act, app, confirmDialog, fill, modal, moreButton, previewDialog, promptDialog, tabBar, toast } from "../ui.js"
+import { anchorsBlock, provenanceTab, qualityBlock, qualityChip } from "../quality.js"
 
-const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"])
+const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project", "snippet", "prompt"])
 
 /** Banner for open AI proposals of an entry (diff, accept, adjust, reject). */
 export function proposalsBanner(data, onDone) {
@@ -164,7 +165,9 @@ function kindActions(data, id, reload) {
       }),
     )
   }
-  if (kind === "script") out.push(btn("Neu testen", "script.retest", { target: id }, "play"), h("a", { class: "btn", href: `#/werkstatt/${encodeURIComponent(nameOf(id))}` }, icon("workshop", 14), "Werkstatt"))
+  if (kind === "script") out.push(h("button", { class: "btn", type: "button", onclick: () => runScriptDialog(data, id) }, icon("play", 14), "Ausführen"))
+  if (kind === "snippet" || kind === "prompt") out.push(h("button", { class: "btn", type: "button", onclick: () => fillDialog(data, id, kind) }, icon("copy", 14), "Ausfüllen und kopieren"))
+  if (kind === "script") out.push(btn("Neu testen", "script.retest", { target: id }, "refresh"), h("a", { class: "btn", href: `#/werkstatt/${encodeURIComponent(nameOf(id))}` }, icon("workshop", 14), "Werkstatt"))
   if (kind === "glossary") out.push(h("a", { class: "btn", href: `#/glossar?q=${encodeURIComponent(data.rawFields?.term || data.title)}`, text: "In der Glossar-Tabelle" }))
   if (id.startsWith("state:")) {
     out.push(
@@ -187,6 +190,75 @@ function kindActions(data, id, reload) {
     )
   }
   return out
+}
+
+/** Run a script: a form from its params schema (call_script), or a command line for older scripts. */
+async function runScriptDialog(data, id) {
+  const schema = data.rawFields?.params
+  const props = schema?.properties || {}
+  const inputs = {}
+  const res = await modal((close) => {
+    const fields = schema
+      ? Object.entries(props).map(([k, p]) => {
+          const el = p.type === "boolean" ? h("input", { type: "checkbox" }) : h("input", { class: "input wide", placeholder: p.type || "", value: p.default !== undefined ? String(p.default) : "" })
+          inputs[k] = { el, type: p.type }
+          return h("div", { class: "field" }, h("label", { text: `${k}${(schema.required || []).includes(k) ? " *" : ""}` }), el, p.description ? h("div", { class: "faint", text: p.description }) : null)
+        })
+      : [h("div", { class: "field" }, h("label", { text: "Argumente (eine Zeile, durch Leerzeichen getrennt)" }), (inputs.__args = { el: h("input", { class: "input wide mono", placeholder: data.rawFields?.usage || "" }) }).el)]
+    const out = h("pre", { class: "mono", style: { maxHeight: "300px", overflow: "auto", whiteSpace: "pre-wrap" } })
+    const run = async () => {
+      const args = {}
+      if (schema) {
+        const params = {}
+        for (const [k, { el, type }] of Object.entries(inputs)) {
+          if (type === "boolean") params[k] = el.checked
+          else if (el.value !== "") params[k] = type === "number" || type === "integer" ? Number(el.value) : type === "object" || type === "array" ? JSON.parse(el.value) : el.value
+        }
+        args.params = params
+      } else args.args = inputs.__args.el.value.split(/\s+/).filter(Boolean)
+      const r = await act("script.run", { target: id, ...args }, { quiet: true })
+      out.textContent = r ? JSON.stringify(r.data, null, 2) : "fehlgeschlagen"
+    }
+    return { title: `${data.title} ausführen`, wide: true, body: [...fields, out], foot: [h("button", { class: "btn", type: "button", text: "Schließen", onclick: () => close(undefined) }), h("button", { class: "btn primary", type: "button", text: "Ausführen", onclick: run })] }
+  })
+  void res
+}
+
+/** Snippet (${name}) or prompt ({{var}}): a field per placeholder, preview, copy. */
+async function fillDialog(data, id, kind) {
+  const re = kind === "snippet" ? /\$\{([A-Za-z_][\w-]*)(?::([^}]*))?\}/g : /\{\{\s*([A-Za-z_][\w-]*)\s*\}\}/g
+  const names = [...new Map([...data.body.matchAll(re)].map((m) => [m[1], m[2]])).entries()]
+  const inputs = {}
+  await modal((close) => {
+    const out = h("pre", { class: "mono", style: { maxHeight: "320px", overflow: "auto", whiteSpace: "pre-wrap" } })
+    const preview = async () => {
+      const values = Object.fromEntries(Object.entries(inputs).filter(([, el]) => el.value !== "").map(([k, el]) => [k, el.value]))
+      const r = await post(kind === "snippet" ? "snippet.fill" : "prompt.fill", { target: id, values }).catch(() => null)
+      out.textContent = r?.data?.text ?? ""
+      return out.textContent
+    }
+    const fields = names.map(([n, def]) => {
+      const el = h("input", { class: "input wide", placeholder: def ?? (kind === "prompt" ? "leer = aus dem Kontext" : ""), oninput: () => preview() })
+      inputs[n] = el
+      return h("div", { class: "field" }, h("label", { text: n }), el)
+    })
+    preview()
+    return {
+      title: `${data.title} ausfüllen`,
+      wide: true,
+      body: [...fields, out],
+      foot: [
+        h("button", { class: "btn", type: "button", text: "Schließen", onclick: () => close(undefined) }),
+        kind === "prompt" ? h("button", { class: "btn", type: "button", text: "👎 nachgebessert", onclick: async () => (await act("prompt.feedback", { target: id, good: false }, { quiet: true }), toast("vermerkt")) }) : null,
+        kind === "prompt" ? h("button", { class: "btn", type: "button", text: "👍 gut", onclick: async () => (await act("prompt.feedback", { target: id, good: true }, { quiet: true }), toast("vermerkt")) }) : null,
+        h("button", { class: "btn primary", type: "button", text: "Kopieren", onclick: async () => {
+          const text = await preview()
+          await navigator.clipboard?.writeText(text).catch(() => undefined)
+          toast("In die Zwischenablage kopiert", { variant: "success" })
+        } }),
+      ],
+    }
+  })
 }
 
 /** Work state editor: tick open items, add, reorder next steps, change the goal (local). */
@@ -228,7 +300,7 @@ export default async function entry(ctx) {
   const draw = (data) => {
     const kind = kindOf(id)
     const isStore = STORE.has(kind)
-    const head = h("div", { class: "page-head" }, h("div", { class: "grow" }, entryHead(data), relevanceLine(data.relevance)))
+    const head = h("div", { class: "page-head" }, h("div", { class: "grow" }, entryHead(data), h("div", { class: "row-flex" }, relevanceLine(data.relevance), qualityChip(data.quality?.score))))
     const actions = h(
       "div",
       { class: "toolbar" },
@@ -256,6 +328,7 @@ export default async function entry(ctx) {
       [
         ["inhalt", "Inhalt"],
         ["links", "Verknüpfungen", data.relations.filter((r) => r.type !== "not_related").length + (data.backlinks?.length || 0) || ""],
+        data.provenance ? ["herkunft", "Herkunft", data.provenance.counts.unbelegt + data.provenance.counts.veraltet || ""] : null,
         isStore ? ["versionen", "Versionen"] : null,
         ["audit", "Audit"],
         isStore ? ["nutzung", "Nutzung"] : null,
@@ -276,11 +349,13 @@ export default async function entry(ctx) {
           "div",
           { class: "cols" },
           h("div", { class: "stack" }, h("div", { class: "card" }, mdBlock(data.body, { section: ctx.query.get("abschnitt") || undefined, checkboxes: kind === "knowledge" && !app.readOnly, onToggle: kind === "knowledge" && !app.readOnly ? async (line, done) => (await act("checklist.toggle", { target: id, line, done }, { quiet: true })) && load() : undefined })), evidenceBlock(data), historyBlock(data)),
-          h("div", { class: "stack" }, factsBlock(data), data.backlinks?.length ? linksBlock({ ...data, links: [], mentions: [] }) : null),
+          h("div", { class: "stack" }, qualityBlock(data), anchorsBlock(data, id, load), factsBlock(data), data.backlinks?.length ? linksBlock({ ...data, links: [], mentions: [] }) : null),
         ),
       )
     } else if (tab === "links") {
       put(body, h("div", { class: "grid two" }, relationsBlock(data, { onChange: load }), linksBlock(data, { onChange: load })))
+    } else if (tab === "herkunft") {
+      put(body, provenanceTab(data, id, load))
     } else if (tab === "versionen") {
       const box = h("div")
       put(body, box)

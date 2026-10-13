@@ -315,10 +315,13 @@ const SPECS: Record<Kind, KindSpec> = {
         tags: normalizeTags(fm.tags),
         fields: {
           usage: str(fm.usage),
-          entry: str(fm.entry) || `${name.replace(/-/g, "_")}.py`,
+          language: str(fm.language) === "typescript" ? "typescript" : "python",
+          entry: str(fm.entry) || `${name.replace(/-/g, "_")}.${str(fm.language) === "typescript" ? "ts" : "py"}`,
           capabilities: strArray(fm.capabilities),
           requirements: strArray(fm.requirements),
           python: str(fm.python),
+          ...(fm.params && typeof fm.params === "object" && !Array.isArray(fm.params) ? { params: fm.params } : {}),
+          ...(fm.result && typeof fm.result === "object" && !Array.isArray(fm.result) ? { result: fm.result } : {}),
           ...commonIn(fm),
         },
         body,
@@ -330,10 +333,13 @@ const SPECS: Record<Kind, KindSpec> = {
           ["name", e.name],
           ["description", e.description],
           ["usage", str(e.fields.usage)],
+          ["language", str(e.fields.language) === "typescript" ? "typescript" : undefined],
           ["entry", str(e.fields.entry)],
           ["capabilities", strArray(e.fields.capabilities)],
           ["requirements", strArray(e.fields.requirements)],
           ["python", str(e.fields.python)],
+          ["params", e.fields.params && typeof e.fields.params === "object" ? e.fields.params : undefined],
+          ["result", e.fields.result && typeof e.fields.result === "object" ? e.fields.result : undefined],
           ["tags", e.tags],
           ...commonOut(e.fields),
         ],
@@ -583,6 +589,82 @@ const SPECS: Record<Kind, KindSpec> = {
       return [[4, e.name.replace(/-/g, " ")], [3, e.title], [2, e.description], [2, `${str(e.fields.role)} ${e.tags.join(" ")}`], [1, e.body]]
     },
   },
+  snippet: {
+    kind: "snippet",
+    smith: "skillsmith",
+    dir: "snippets",
+    layout: "file",
+    main: ".md",
+    tiers: ["active", "archive"],
+    label: "Snippet",
+    labelPlural: "Snippets",
+    aliases: ["snippet", "snippets", "schnipsel", "baustein"],
+    parse(content, fallbackName) {
+      const { fm, body } = parseDoc(content)
+      const name = str(fm.name) || fallbackName
+      const fields: Record<string, unknown> = { ...commonIn(fm), language: str(fm.language) || fenceLanguage(body) || "text" }
+      for (const k of ["origin", "test"]) if (str(fm[k])) fields[k] = str(fm[k])
+      return { name, title: str(fm.title) || name, description: str(fm.description), tags: normalizeTags(fm.tags), fields, body }
+    },
+    serialize(e) {
+      return serializeDoc(
+        [
+          ["name", e.name],
+          ["title", e.title !== e.name ? e.title : ""],
+          ["description", e.description],
+          ["language", str(e.fields.language)],
+          ["origin", str(e.fields.origin)],
+          ["test", str(e.fields.test)],
+          ["tags", e.tags],
+          ...commonOut(e.fields),
+        ],
+        e.body,
+      )
+    },
+    searchFields(e) {
+      return [[3, e.title], [2, e.name.replace(/-/g, " ")], [2, e.description], [3, `${e.tags.join(" ")} ${str(e.fields.language)}`], [1, e.body]]
+    },
+  },
+  prompt: {
+    kind: "prompt",
+    smith: "skillsmith",
+    dir: "prompts",
+    layout: "file",
+    main: ".md",
+    tiers: ["active", "archive"],
+    label: "Prompt",
+    labelPlural: "Prompts",
+    aliases: ["prompt", "prompts", "vorlage-prompt"],
+    parse(content, fallbackName) {
+      const { fm, body } = parseDoc(content)
+      const name = str(fm.name) || fallbackName
+      const fields: Record<string, unknown> = { ...commonIn(fm) }
+      for (const k of ["agent", "model"]) if (str(fm[k])) fields[k] = str(fm[k])
+      return { name, title: str(fm.title) || name, description: str(fm.description), tags: normalizeTags(fm.tags), fields, body }
+    },
+    serialize(e) {
+      return serializeDoc(
+        [
+          ["name", e.name],
+          ["title", e.title !== e.name ? e.title : ""],
+          ["description", e.description],
+          ["agent", str(e.fields.agent)],
+          ["model", str(e.fields.model)],
+          ["tags", e.tags],
+          ...commonOut(e.fields),
+        ],
+        e.body,
+      )
+    },
+    searchFields(e) {
+      return [[3, e.title], [3, e.name.replace(/-/g, " ")], [2, e.description], [2, e.tags.join(" ")], [1, e.body]]
+    },
+  },
+}
+
+/** Language of the first fenced code block ("```java" → java). */
+export function fenceLanguage(body: string): string {
+  return /^```([A-Za-z0-9_+#-]+)/m.exec(body)?.[1]?.toLowerCase() ?? ""
 }
 
 const MEMORY_TYPE_SET = new Set<string>(MEMORY_TYPES)
@@ -635,8 +717,14 @@ export const TIER_LABEL: Record<string, string> = {
   foreign: "extern",
 }
 
-/** module file names of a script entry */
-export function scriptFiles(name: string): { module: string; code: string; test: string } {
+/** module file names of a script entry (python: <m>.py + test_<m>.py; typescript: <m>.ts + <m>.test.ts) */
+export function scriptFiles(name: string, language?: string): { module: string; code: string; test: string } {
   const module = name.replace(/-/g, "_")
+  if (language === "typescript") return { module, code: `${module}.ts`, test: `${module}.test.ts` }
   return { module, code: `${module}.py`, test: `test_${module}.py` }
+}
+
+/** Language of a script entry (field "language", else from the entry file). */
+export function scriptLanguage(e: Pick<Entry, "fields">): "python" | "typescript" {
+  return str(e.fields.language) === "typescript" || /\.ts$/.test(str(e.fields.entry)) ? "typescript" : "python"
 }

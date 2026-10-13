@@ -9,6 +9,8 @@ import type { Ctx } from "./context"
 import type { JobDef } from "./jobs"
 import { pruneLogs } from "./logs"
 import { reviewAgents } from "./agent-defs"
+import { askAssistant } from "./assistant"
+import { reviewPrompts } from "./library"
 
 const smithsParam = (v: string | undefined): Smith[] | undefined => {
   const list = (v ?? "")
@@ -113,6 +115,42 @@ export const BUILTIN_JOBS: JobDef[] = [
     ],
     unavailable: (ctx) => (!ctx.options.tasks.agents ? "Agenten-Aufträge sind aus" : !ctx.store.list("agent").length ? "keine Agenten im Store (Bibliothek → Agenten → aus opencode übernehmen)" : undefined),
     run: (ctx, jr) => reviewAgents(ctx, jr),
+  },
+  {
+    id: "anchors",
+    label: "Code-Anker prüfen",
+    description: "Verankert neue [[code:…]]-Anker und prüft nach neuen Commits in den Projekten, ob der verankerte Code unverändert, geändert, verschoben oder gelöscht ist (Eingang „Code geändert“).",
+    area: "anchors",
+    defaults: () => ({ start: true, intervalMin: 15 }),
+    unavailable: (ctx) => (!ctx.options.anchors.enabled ? "Code-Anker sind aus" : !ctx.anchors ? "nicht verfügbar" : undefined),
+    run: (ctx, jr) => ctx.anchors!.runJob(jr.trigger, jr.trigger === "von Hand"),
+  },
+  {
+    id: "gym",
+    label: "Gym",
+    description: "A/B-Läufe: dieselbe Aufgabe ohne und mit Eintrag, mehrere Läufe je Arm; Urteil hilft, neutral, schadet oder ungenutzt (mit Modell).",
+    area: "gym",
+    defaults: () => ({ idleMin: 30, catchUp: "skip" }),
+    unavailable: (ctx) => (!ctx.options.gym.enabled ? "Gym ist aus" : !ctx.gym?.tasks().some((t) => t.status === "aktiv") ? "keine aktiven Gym-Aufgaben" : undefined),
+    run: (ctx, jr) => ctx.gym!.runJob(jr.trigger),
+  },
+  {
+    id: "review-extract",
+    label: "Review-Wissen aus GitHub",
+    description: "Holt Review-Kommentare neuer PRs der eingestellten Repositories (gh oder GitHub-MCP, nur lesend), bündelt ähnliche und schlägt ab 3 Kommentaren von 2 Personen eine Vorgabe vor.",
+    area: "reviews",
+    defaults: () => ({ daily: ["07:45"], catchUp: "once" }),
+    unavailable: (ctx) => (!ctx.options.reviews.enabled ? "Review-Wissen ist aus" : !ctx.options.reviews.repos.length ? "keine Repositories eingestellt (reviews.repos)" : undefined),
+    run: (ctx) => ctx.reviews!.runJob(),
+  },
+  {
+    id: "prompt-review",
+    label: "Prompts verbessern",
+    description: "Prompts der Bibliothek, deren aktuelle Fassung mehrfach nachgebessert oder verworfen wurde, bekommen einen Verbesserungsvorschlag mit Diff (Sie geben frei).",
+    area: "library",
+    defaults: () => ({ intervalMin: 7 * 1440, catchUp: "once" }),
+    unavailable: (ctx) => (!ctx.store.list("prompt").length ? "keine Prompts in der Bibliothek" : undefined),
+    run: (ctx) => reviewPrompts(ctx, (p, t) => askAssistant(ctx, p, t)),
   },
   {
     id: "prune",

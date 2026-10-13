@@ -5,7 +5,7 @@ import { oneLine, slugify, truncate } from "../../util/text"
 import type { Ctx } from "../context"
 import { str, strArray } from "../frontmatter"
 import { canonicalEdge, isStoreId } from "../graph"
-import { glossarySlug, meaningsOf, spec } from "../kinds"
+import { glossarySlug, meaningsOf, spec, fenceLanguage } from "../kinds"
 import type { WorkState } from "../memory-db"
 import { GuardError } from "../ops"
 import { isSmithAgent } from "../prompts"
@@ -141,7 +141,7 @@ export const MEMORY_ACTIONS: ActionDef[] = [
     area: "neu",
     smith: (a) => spec(a.kind as Kind).smith,
     args: {
-      kind: { t: "enum", values: ["skill", "error", "glossary", "agent"] },
+      kind: { t: "enum", values: ["skill", "error", "glossary", "agent", "snippet", "prompt"] },
       name: { t: "string", max: 64, optional: true, pattern: /^([a-z0-9]+(-[a-z0-9]+)*)?$/ },
       title: { t: "string", max: 160, min: 1 },
       description: { t: "string", max: 1000, optional: true },
@@ -167,6 +167,8 @@ export const MEMORY_ACTIONS: ActionDef[] = [
         const model = str(f.model)
         Object.assign(fields, { mode: ["primary", "subagent", "all"].includes(str(f.mode)) ? str(f.mode) : "primary", ...(model ? { model } : {}), ...(typeof f.temperature === "number" ? { temperature: f.temperature } : {}) })
       }
+      if (kind === "snippet") Object.assign(fields, { language: str(f.language) || fenceLanguage(a.body ?? "") || "text", ...(str(f.origin) ? { origin: str(f.origin) } : {}) })
+      if (kind === "prompt") Object.assign(fields, { ...(str(f.agent) ? { agent: str(f.agent) } : {}), ...(str(f.model) ? { model: str(f.model) } : {}) })
       const msg = await ctx.ops.create(run, kind, { name, title: a.title, description: a.description || a.title, tags: a.tags, fields, body: a.body ?? "", reason: "vom Nutzer angelegt", approved: true })
       return { message: `${msg.split("\n")[0]}${kind === "agent" ? " – wirkt nach einem Neustart von opencode" : ""}`, target: `${kind}:${name}`, open: `#/editor/${kind}:${name}` }
     },

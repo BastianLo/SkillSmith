@@ -183,7 +183,8 @@ export class LinkIndex {
   broken(): Array<{ from: string; target: string; raw: string }> {
     this.ensure()
     const out: Array<{ from: string; target: string; raw: string }> = []
-    for (const [from, links] of this.outgoing) for (const l of links) if (!l.id && !l.bare) out.push({ from, target: l.target, raw: l.raw })
+    // code anchors ([[code:…]]) are checked by the job "anchors", not here
+    for (const [from, links] of this.outgoing) for (const l of links) if (!l.id && !l.bare && !l.target.startsWith("code:")) out.push({ from, target: l.target, raw: l.raw })
     return out
   }
 

@@ -2,6 +2,13 @@ import type { Options } from "../config"
 import type { Logger } from "../log"
 import type { Client } from "./agent-runner"
 import type { AgentTasks } from "./agent-tasks"
+import type { Anchors } from "./anchors"
+import type { QualityEngine } from "./quality"
+import type { CrossCheck } from "./crosscheck"
+import type { Gym } from "./gym"
+import type { Library } from "./library"
+import type { ReviewKnowledge } from "./review-knowledge"
+import type { Importer } from "./importer"
 import type { AuditLog } from "./audit"
 import type { EventBus } from "./bus"
 import type { Doctor } from "./doctor"
@@ -85,6 +92,20 @@ export interface Ctx {
   tasks: Tasks
   /** local pipeline per project */
   pipeline: Pipeline
+  /** code anchors [[code:…]] (5c) */
+  anchors?: Anchors
+  /** quality score per entry (5c) */
+  quality?: QualityEngine
+  /** cross-check of AI-written paragraphs (5d) */
+  crosscheck?: CrossCheck
+  /** A/B runs: does an entry help the agents? (5d) */
+  gym?: Gym
+  /** snippets and prompts: usage, candidates (5j) */
+  library?: Library
+  /** review knowledge from GitHub, pre-PR check (5f) */
+  reviews?: ReviewKnowledge
+  /** document import (5h) */
+  importer?: Importer
   /** tasks delegated to opencode agents */
   agentTasks: AgentTasks
   /** review queue and curator of this instance (web actions "review now", "curate") */

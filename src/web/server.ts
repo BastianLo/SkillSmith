@@ -15,7 +15,7 @@
  * Strict CSP without inline scripts; security events go to the audit log (throttled).
  */
 import { randomBytes, timingSafeEqual } from "node:crypto"
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readFileSync, statSync, chmodSync } from "node:fs"
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ActionError, executeAction, needsStrongToken, toActionError, type ActionRequest } from "../core/actions"
@@ -127,6 +127,8 @@ export class WebServer {
         const link = `http://${o.host === "0.0.0.0" ? "127.0.0.1" : o.host}:${port}/#t=${token}`
         this.info = { url: link, port, token, pid: process.pid, directory: this.ctx.directory, startedAt: nowIso(), host: o.host }
         writeJsonAtomic(this.file, this.info)
+        // the token: readable by this user only (the smith CLI reads it)
+        chmodPrivate(this.file)
         this.ctx.log.info(`web view on http://${o.host}:${port}`)
         this.ctx.audit?.append({ actor: "system", category: "security", action: "web-start", result: "ok", message: `Weboberfläche auf ${o.host}:${port}${o.token ? "" : " – ohne Token"}${o.readOnly ? " · nur lesend" : ""}` })
         return this.info
@@ -151,6 +153,7 @@ export class WebServer {
       try {
         // keep the token for tokenRotate: false (bookmarks keep working)
         writeJsonAtomic(this.file, this.ctx.options.web.tokenRotate ? {} : { token: cur.token })
+        chmodPrivate(this.file)
       } catch {
         // ignore
       }
@@ -197,7 +200,7 @@ export class WebServer {
     }
     if (req.method === "OPTIONS") return new Response("preflight not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     const isPost = req.method === "POST"
-    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload"
+    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload" || url.pathname === "/api/import"
     if (req.method !== "GET" && req.method !== "HEAD" && !(isPost && writePath)) return new Response("method not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     if (!url.pathname.startsWith("/api/")) return this.staticFile(url.pathname)
     const given = req.headers.get("x-smith-token") ?? ""
@@ -221,7 +224,7 @@ export class WebServer {
         this.ctx.audit?.security("origin", `Sec-Fetch-Site ${site}`)
         return this.json(403, { error: "nur aus der Weboberfläche selbst" })
       }
-      return url.pathname === "/api/action" ? this.action(req, hasToken) : this.upload(req, url)
+      return url.pathname === "/api/action" ? this.action(req, hasToken) : url.pathname === "/api/import" ? this.importUpload(req, url) : this.upload(req, url)
     }
     try {
       if (url.pathname === "/api/events") {
@@ -268,6 +271,22 @@ export class WebServer {
       const e = toActionError(err)
       if (e.status >= 500) this.ctx.log.warn(`web action failed`, e.message)
       return this.json(e.status, { error: e.message, ...e.body })
+    }
+  }
+
+  /** Document import (5h): raw bytes of the file (PDF: the text per page as JSON from pdf.js). */
+  private async importUpload(req: Request, url: URL): Promise<Response> {
+    const ctx = this.ctx
+    try {
+      if (ctx.options.web.readOnly) return this.json(403, { error: "Die Weboberfläche ist nur lesend" })
+      const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase()
+      if (type !== "application/octet-stream") return this.json(415, { error: "nur application/octet-stream" })
+      const data = await this.body(req, Math.round(ctx.options.import.maxMB * 1024 * 1024) + 1024)
+      const result = await executeAction({ ctx, actor: "web" }, { action: "import.create", args: { name: (url.searchParams.get("name") ?? "").slice(0, 200), ai: url.searchParams.get("ai") || undefined } }, data)
+      return this.json(200, result)
+    } catch (err) {
+      const e = toActionError(err)
+      return this.json(e.status, { error: e.message })
     }
   }
 
@@ -331,5 +350,13 @@ export class WebServer {
     const type = STATIC_TYPES[extname(full)]
     if (!type) return new Response("not found", { status: 404 })
     return new Response(readFileSync(full), { headers: this.headers(type, { "cache-control": rel.startsWith("vendor/") ? "max-age=86400" : "no-cache" }) })
+  }
+}
+
+function chmodPrivate(file: string): void {
+  try {
+    chmodSync(file, 0o600)
+  } catch {
+    // best effort (filesystems without modes)
   }
 }

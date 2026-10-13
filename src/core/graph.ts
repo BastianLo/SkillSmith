@@ -18,8 +18,9 @@ import type { MemoryDb, ResultMemory, WorkState } from "./memory-db"
 import { stateId } from "./memory-db"
 import type { HistoryRecord, SessionHistory } from "./session-history"
 import type { Store } from "./store"
+import { codeNodeId } from "./anchors"
 
-export type NodeKind = Kind | "arbeitsstand" | "ergebnis" | "session"
+export type NodeKind = Kind | "arbeitsstand" | "ergebnis" | "session" | "code"
 
 export interface GraphNode {
   id: string
@@ -66,6 +67,7 @@ export const RELATION_LABEL: Record<RelationType, string> = {
 export function nodeLabel(kind: NodeKind, type?: string): string {
   if (kind === "memory") return MEMORY_TYPE_LABEL[type ?? ""] ?? "Erinnerung"
   if (kind === "arbeitsstand" || kind === "ergebnis" || kind === "session") return MEMORY_TYPE_LABEL[kind]
+  if (kind === "code") return "Code"
   return spec(kind).label
 }
 
@@ -195,7 +197,38 @@ export class Graph {
       const r = this.history?.get(id.slice(8))
       return r ? sessionNode(r) : undefined
     }
+    if (id.startsWith("code:")) return this.codeNodes().get(id)
     return undefined
+  }
+
+  /** Code files with anchored knowledge (5c): one node per file. */
+  codeNodes(): Map<string, GraphNode> {
+    const out = new Map<string, GraphNode>()
+    for (const kind of KINDS) {
+      for (const e of this.store.list(kind)) {
+        for (const a of e.meta?.anchors ?? []) {
+          const id = codeNodeId(a.project, a.path)
+          const n = out.get(id)
+          const symbol = a.symbol ? `${a.symbol}${a.member ? `#${a.member}` : ""}` : a.member ? `#${a.member}` : ""
+          if (n) {
+            if (symbol && !n.text.includes(symbol)) n.text += `\n${symbol}`
+            continue
+          }
+          out.set(id, {
+            id,
+            kind: "code",
+            name: a.path,
+            title: a.path.slice(a.path.lastIndexOf("/") + 1),
+            summary: `${a.project ? `${a.project}: ` : ""}${a.path}`,
+            project: a.project,
+            date: a.at,
+            hash: a.hash,
+            text: `${a.path}${symbol ? `\n${symbol}` : ""}`,
+          })
+        }
+      }
+    }
+    return out
   }
 
   /** All nodes (owned entries, work states, results; sessions only when an edge reaches them). */
@@ -204,6 +237,7 @@ export class Graph {
     for (const kind of KINDS) for (const e of this.store.list(kind)) out.push(entryNode(e))
     for (const s of this.mem?.states() ?? []) out.push(stateNode(s))
     for (const r of this.mem?.results() ?? []) out.push(resultNode(r))
+    out.push(...this.codeNodes().values())
     const sessions = new Set<string>()
     for (const e of this.allEdges()) for (const id of [e.from, e.to]) if (id.startsWith("session:")) sessions.add(id)
     for (const id of sessions) {
@@ -258,6 +292,7 @@ export class Graph {
             add(from, key(o.kind, o.name), "related", 0.5, `Erwähnt ${spec(o.kind).label} ${o.name}.`)
           }
         }
+        for (const a of e.meta?.anchors ?? []) add(from, codeNodeId(a.project, a.path), "references", 0.7, `Verankert im Code: ${a.ref}.`)
         if (e.meta?.absorbedInto) add(from, key(kind, e.meta.absorbedInto), "duplicates", 0.8, `Zusammengeführt in ${e.meta.absorbedInto}.`)
         const sup = str(e.fields.superseded_by)
         if (kind === "memory" && sup) add(key("memory", sup), from, "supersedes", 0.9, "Neuere Fassung löst diese Erinnerung ab.")

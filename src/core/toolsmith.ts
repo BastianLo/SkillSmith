@@ -10,7 +10,8 @@ import type { Run, TestStatus } from "../types"
 import { nowIso, oneLine } from "../util/text"
 import type { Ctx } from "./context"
 import { str, strArray } from "./frontmatter"
-import { normalizeTags, scriptFiles } from "./kinds"
+import { normalizeTags, scriptFiles, scriptLanguage } from "./kinds"
+import { checkTsDraft } from "./scripts"
 import { GuardError, type PublishArgs } from "./ops"
 import { checkDraft, draftFiles, draftRoot, pythonEnv, type CheckReport, type Draft, type DraftSpec } from "./pyworkshop"
 import { validateDescription, validateName } from "./skill"
@@ -39,10 +40,16 @@ export class Workshop {
     if (secrets.length) throw new GuardError(`the script looks like it contains sensitive data (${secrets.join(", ")}); use arguments or environment variables instead`)
   }
 
-  private async check(run: Run, spec: DraftSpec, isNew: boolean, iterations: number): Promise<string> {
+  /** Check of a draft with the runtime of its language. */
+  private async runCheck(spec: DraftSpec, dir: string) {
+    if (spec.language === "typescript") return checkTsDraft({ spec, dir, options: this.ctx.options, stateDir: this.ctx.store.stateDir, log: this.ctx.log })
     const env = await pythonEnv(this.ctx.options, this.ctx.store.stateDir)
+    return checkDraft({ spec, dir, env, options: this.ctx.options, log: this.ctx.log })
+  }
+
+  private async check(run: Run, spec: DraftSpec, isNew: boolean, iterations: number): Promise<string> {
     const dir = draftRoot(this.ctx.store.stateDir, run.id, spec.name)
-    const report = await checkDraft({ spec, dir, env, options: this.ctx.options, log: this.ctx.log })
+    const report = await this.runCheck(spec, dir)
     const draft: Draft = { ...spec, isNew, iterations, dir, updatedAt: nowIso(), check: report }
     this.drafts(run).set(spec.name, draft)
     const left = this.ctx.options.toolsmith.maxIterations - iterations
@@ -67,8 +74,12 @@ export class Workshop {
     }
     const existing = this.ctx.store.getOwned("script", spec.name)
     if (!existing && run.actor === "curator") throw new GuardError("the curator can only repair existing scripts")
+    if (existing && !input.language) spec.language = scriptLanguage(existing)
+    spec.language = spec.language === "typescript" ? "typescript" : "python"
     if (existing) {
-      const f = scriptFiles(spec.name)
+      if (!spec.params && existing.fields.params) spec.params = existing.fields.params as Record<string, unknown>
+      if (!spec.result && existing.fields.result) spec.result = existing.fields.result as Record<string, unknown>
+      const f = scriptFiles(spec.name, scriptLanguage(existing))
       if (!spec.code.trim()) spec.code = this.ctx.store.readFileOf(existing, f.code) ?? ""
       if (!spec.tests.trim()) spec.tests = this.ctx.store.readFileOf(existing, f.test) ?? ""
       if (!spec.docs.trim()) spec.docs = existing.body
@@ -98,6 +109,9 @@ export class Workshop {
       capabilities: patch.capabilities?.length ? [...new Set(patch.capabilities)] : prev.capabilities,
       requirements: patch.requirements?.length ? [...new Set(patch.requirements)] : prev.requirements,
       tags: patch.tags?.length ? normalizeTags(patch.tags) : prev.tags,
+      language: prev.language,
+      params: patch.params ?? prev.params,
+      result: patch.result ?? prev.result,
     }
     this.validateSpec(spec)
     const iterations = prev.iterations + 1
@@ -122,10 +136,9 @@ export class Workshop {
   /** Re-check of a staged script right before an approved publish. */
   recheck = async (args: PublishArgs): Promise<{ ok: boolean; message: string; test?: TestStatus }> => {
     const spec = fromPublishArgs(args)
-    const env = await pythonEnv(this.ctx.options, this.ctx.store.stateDir)
     const dir = join(this.ctx.store.stateDir, "drafts", `approve-${Date.now()}`, spec.name)
     try {
-      const report = await checkDraft({ spec, dir, env, options: this.ctx.options, log: this.ctx.log })
+      const report = await this.runCheck(spec, dir)
       return { ok: report.ok, message: report.text, test: report.test }
     } finally {
       rmSync(join(dir, ".."), { recursive: true, force: true })
@@ -134,7 +147,8 @@ export class Workshop {
 }
 
 export function toPublishArgs(draft: DraftSpec & { isNew: boolean }, check: CheckReport, pythonTarget: string, a: { reason?: string; candidateId?: string }): PublishArgs {
-  const f = scriptFiles(draft.name)
+  const ts = draft.language === "typescript"
+  const f = scriptFiles(draft.name, draft.language)
   return {
     name: draft.name,
     isNew: draft.isNew,
@@ -148,7 +162,10 @@ export function toPublishArgs(draft: DraftSpec & { isNew: boolean }, check: Chec
         entry: f.code,
         capabilities: [...new Set([...draft.capabilities, ...check.detected])].sort(),
         requirements: draft.requirements,
-        python: pythonTarget,
+        python: ts ? "" : pythonTarget,
+        language: ts ? "typescript" : "python",
+        ...(draft.params ? { params: draft.params } : {}),
+        ...(draft.result ? { result: draft.result } : {}),
       },
       body: draft.docs.trim(),
     },
@@ -162,7 +179,8 @@ export function toPublishArgs(draft: DraftSpec & { isNew: boolean }, check: Chec
 }
 
 export function fromPublishArgs(args: PublishArgs): DraftSpec {
-  const f = scriptFiles(args.content.name)
+  const language = str(args.content.fields.language) === "typescript" ? "typescript" : "python"
+  const f = scriptFiles(args.content.name, language)
   return {
     name: args.content.name,
     description: args.content.description,
@@ -173,5 +191,8 @@ export function fromPublishArgs(args: PublishArgs): DraftSpec {
     requirements: strArray(args.content.fields.requirements),
     tags: args.content.tags,
     docs: args.content.body,
+    language,
+    params: args.content.fields.params as Record<string, unknown> | undefined,
+    result: args.content.fields.result as Record<string, unknown> | undefined,
   }
 }

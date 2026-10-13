@@ -9,6 +9,7 @@
  *    last weeks and proposes prompt changes as a diff with reason – the user approves
  *    (KI-Recht „vorschlag“, never written directly).
  */
+import { expandPromptRefs } from "./library"
 import type { Run } from "../types"
 import { parseModel } from "../config"
 import { oneLine, slugify, truncate } from "../util/text"
@@ -78,7 +79,7 @@ export function registerAgents(ctx: Ctx, cfg: AnyRecord): string[] {
       ...(e.description ? { description: e.description } : {}),
       mode: str(f.mode) || prev.mode || "primary",
       // an empty prompt never replaces opencode's own
-      ...(e.body.trim() ? { prompt: e.body.trim() } : {}),
+      ...(e.body.trim() ? { prompt: expandPromptRefs(ctx.store.list("prompt"), e.body.trim()) } : {}),
       ...(parseModel(model) ? { model } : {}),
       ...(typeof f.temperature === "number" ? { temperature: f.temperature } : {}),
       ...(typeof f.steps === "number" ? { steps: f.steps } : {}),

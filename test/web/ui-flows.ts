@@ -170,7 +170,11 @@ await page.waitForTimeout(800)
 // 8. palette: jump to an entry
 {
   await go("#/", 600)
+  // the pointer of the previous flow must not rest on a palette row (hover selects it)
+  await page.mouse.move(1, 1)
   await page.keyboard.press("Control+k")
+  // the palette module is loaded on demand: type only when its input has the focus
+  await page.waitForFunction(() => document.activeElement === document.querySelector(".palette input"), null, { timeout: 10_000 }).catch(() => undefined)
   await page.keyboard.type("Auth-Gateway")
   // the entry search is debounced and asynchronous: wait until the entry is listed first
   await page.waitForFunction(() => document.querySelector(".palette .item.on")?.textContent?.includes("Auth-Gateway") && document.querySelector(".palette .item.on .grp")?.textContent === "Eintrag", null, { timeout: 15_000 }).catch(() => undefined)
@@ -296,6 +300,18 @@ await page.waitForTimeout(800)
   await page.locator("#job-prune").getByRole("button", { name: "Verlauf" }).click()
   await page.waitForTimeout(800)
   await page.screenshot({ path: join(shots, "f13-job-verlauf.png") })
+}
+
+// 14. code anchors (5c): the changed method is confirmed with "Passt noch"
+{
+  await go("#/code?pfad=src%2FTokenStore.java&projekt=kundenportal", 1500)
+  const row = page.locator(".anchor-row", { hasText: "TokenStore#revoke" }).first()
+  await row.getByRole("button", { name: "Passt noch" }).click()
+  await page.waitForTimeout(1500)
+  const e = await api("entry?id=knowledge%3Arefresh-token-sperren")
+  const a = e.anchors.find((x: any) => x.ref === "TokenStore#revoke")
+  check("Code-Anker: „Passt noch“ übernimmt den neuen Code", a && a.status !== "changed", a?.status)
+  await page.screenshot({ path: join(shots, "f14-code-anker.png") })
 }
 
 await browser.close()

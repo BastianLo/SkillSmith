@@ -42,6 +42,7 @@ import { createLogger, type Logger } from "../log"
 import type { Smith } from "../types"
 import { errorMessage, nowIso, sha, truncate } from "../util/text"
 import { COMMAND_NAMES, COMMANDS, handleCommand } from "./commands"
+import { promptCommand } from "./library-commands"
 import { MetricEvents } from "./metric-events"
 import { loadZod } from "./schema"
 import { createTools, READ_TOOLS, WRITE_TOOL_PREFIXES } from "./tools"
@@ -531,6 +532,13 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
         if (!sid || isInternal(sid)) return
         const script = metricEvents.onToolAfter(sid, String(inp.tool ?? ""), inp.callID, inp.args ?? {}, out ?? {})
         if (script) ctx.hints.onEntryUsed(sid, "script", script)
+        // 5j: code written in this session (repeated in several sessions → snippet candidate)
+        if ((inp.tool === "write" || inp.tool === "edit") && ctx.library) {
+          const code = String(inp.tool === "write" ? (inp.args?.content ?? "") : (inp.args?.newString ?? inp.args?.new_string ?? ""))
+          const path = String(inp.args?.filePath ?? inp.args?.file_path ?? "")
+          const ext = /\.([A-Za-z0-9]+)$/.exec(path)?.[1]?.toLowerCase() ?? "text"
+          if (code && !/\.(md|json|lock|txt|ya?ml)$/i.test(path)) void ctx.library.recordCode(sid, code, ext).catch(() => undefined)
+        }
         if (inp.tool === "skill") {
           const name = typeof inp.args?.name === "string" ? inp.args.name.trim() : ""
           if (!name || !ctx.store.get("skill", name)) return
@@ -592,6 +600,17 @@ export async function createServer(input: AnyRecord, rawOptions?: Record<string,
 
     "command.execute.before": async (inp: AnyRecord, out: AnyRecord) => {
       if (!COMMAND_NAMES.has(inp?.command)) return
+      // /prompt: the filled prompt becomes the user's message (no internal output)
+      if (inp.command === "prompt") {
+        try {
+          const r = await promptCommand(ctx, inp.arguments ?? "")
+          const text = r.ok ? r.text : `${INTERNAL_PREFIX} Output the following text exactly as written. Do not call any tools and do not add anything:\n\n${r.text}`
+          if (Array.isArray(out?.parts)) out.parts.splice(0, out.parts.length, { type: "text", text })
+        } catch (err) {
+          log.error("command prompt failed", errorMessage(err))
+        }
+        return
+      }
       let result: string
       try {
         result = await handleCommand(ctx, { queue, curator }, inp.command, inp.arguments ?? "", inp.sessionID)

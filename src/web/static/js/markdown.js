@@ -61,6 +61,8 @@ function makeInline(o) {
     // attachments (before escaping: the path pattern is strict)
     t = t.replace(/!\[([^\]\n]*)\]\(anhang:([A-Za-z0-9._/-]+)\)/g, (_m, alt, path) => keep(`<img data-att="${esc(path)}" alt="${esc(alt)}" loading="lazy">`))
     t = t.replace(/\[([^\]\n]+)\]\(anhang:([A-Za-z0-9._/-]+)\)/g, (_m, label, path) => keep(`<a href="#" class="att" data-att-link="${esc(path)}">📎 ${esc(label)}</a>`))
+    // code anchors [[code:…]] (5c) → the view "Wissen zum Code"
+    t = t.replace(/\[\[code:([^\[\]\n|]+?)(?:\|([^\[\]\n]+))?\]\]/g, (_m, ref, label) => keep(`<a class="wl code-anchor" href="#/code?ref=${encodeURIComponent(ref.trim())}" title="Code-Anker ${esc(ref.trim())}">⟨/⟩ ${esc((label || ref).trim())}</a>`))
     // [[links]]
     t = t.replace(WIKI_RE, (_m, target, section, label) => {
       const r = o.resolve ? o.resolve(target.trim()) : undefined

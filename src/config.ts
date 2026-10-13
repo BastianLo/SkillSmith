@@ -303,6 +303,82 @@ export interface Options {
   /** schedules of the recurring jobs by id (see src/core/jobs.ts); unset fields keep the job's default */
   jobs: Record<string, JobConfig>
 
+  // --- quality: code anchors, provenance, quality score (5c) ------------------------------
+  anchors: {
+    /** pin [[code:…]] anchors on every write and check them after new commits */
+    enabled: boolean
+  }
+  provenance: {
+    enabled: boolean
+    /** sources per paragraph from the smiths: aus | warnen (hint to the agent) | pflicht (rejected without) */
+    perParagraph: "aus" | "warnen" | "pflicht"
+  }
+  /** document import (5h) */
+  import: {
+    maxMB: number
+    /** originals up to this size are stored in the store (git) as attachment, larger ones only locally */
+    storeMaxMB: number
+    /** KI-Recht of imported documents */
+    defaultAi: "frei" | "vorschlag" | "lesen" | "privat"
+    /** characters per extraction section */
+    chunkChars: number
+    /** cross-check every finding against its quote (needs crosscheck.model) */
+    crosscheck: boolean
+    /** keep the original locally after "Übernehmen" */
+    keepOriginal: boolean
+  }
+  /** review knowledge from GitHub (5f) */
+  reviews: {
+    enabled: boolean
+    /** "owner/repo" */
+    repos: string[]
+    /** auto = gh when logged in, else the GitHub MCP in a read-only session */
+    source: "auto" | "gh" | "mcp"
+    /** path of the GitHub CLI ("" = gh) */
+    gh: string
+    /** opencode agent for the MCP session ("" = build) */
+    agent: string
+    minComments: number
+    minPersons: number
+    /** similarity threshold of the bundling (0–1) */
+    similarity: number
+    /** first fetch: this many days back */
+    days: number
+    maxPrs: number
+    /** pre-PR check also against conventions that do not come from reviews */
+    checkAllConventions: boolean
+  }
+  crosscheck: {
+    enabled: boolean
+    /** "provider/model" of the checker – a different model than the writer; empty = no cross-check */
+    model: string
+    /** kinds whose AI-written paragraphs are checked */
+    kinds: string[]
+  }
+  gym: {
+    enabled: boolean
+    /** model of both arms ("" = last used model) */
+    model: string
+    /** opencode agent that works on the gym tasks */
+    agent: string
+    runsPerArm: number
+    timeoutMin: number
+    /** gym tasks per job run */
+    maxTasksPerRun: number
+    /** bericht = report only; archivieren = archive after 2 confirmed rounds on different days */
+    consequence: "bericht" | "archivieren"
+  }
+  quality: {
+    /** weights of the components (0 = not counted) */
+    weights: { belegt: number; frische: number; hinweise: number; zweifel: number; anker: number; gym: number }
+    /** below this score an entry is listed in the inbox ("Qualität prüfen") */
+    lowThreshold: number
+    /** hints prefer entries with a high score (0 = off) */
+    hintBoost: number
+    /** confirmation older than this many days counts as stale (freshness 0) */
+    freshDays: number
+  }
+
   // --- curator -------------------------------------------------------------------
   curatorIntervalDays: number
   curatorMaxChanges: number
@@ -575,6 +651,13 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
     inbox: { types: { change: "gebuendelt" }, changesDays: 14, maxPerGroup: 50 },
     log: { level: "info", areas: {}, days: 14, maxMB: 50 },
     jobs: {},
+    anchors: { enabled: true },
+    provenance: { enabled: true, perParagraph: "warnen" },
+    import: { maxMB: 30, storeMaxMB: 5, defaultAi: "vorschlag", chunkChars: 6000, crosscheck: true, keepOriginal: false },
+    reviews: { enabled: true, repos: [], source: "auto", gh: "", agent: "", minComments: 3, minPersons: 2, similarity: 0.45, days: 30, maxPrs: 30, checkAllConventions: false },
+    crosscheck: { enabled: true, model: "", kinds: ["knowledge", "memory", "skill"] },
+    gym: { enabled: true, model: "", agent: "build", runsPerArm: 3, timeoutMin: 10, maxTasksPerRun: 2, consequence: "bericht" },
+    quality: { weights: { belegt: 0.35, frische: 0.15, hinweise: 0.2, zweifel: 0.15, anker: 0.15, gym: 0.2 }, lowThreshold: 40, hintBoost: 0.15, freshDays: 365 },
     curatorIntervalDays: 7,
     curatorMaxChanges: 5,
     consolidate: true,
@@ -942,6 +1025,18 @@ const SCHEMA: Record<string, Rule> = {
   inbox: { types: recordOf(oneOf(...INBOX_MODES)), changesDays: num(1, 3650), maxPerGroup: int(5, 1000) },
   log: { level: oneOf(...LEVELS), areas: recordOf(oneOf(...LEVELS)), days: num(1, 3650), maxMB: num(1, 10_000) },
   jobs: recordOf(jobConfig),
+  anchors: { enabled: bool },
+  provenance: { enabled: bool, perParagraph: oneOf("aus", "warnen", "pflicht") },
+  import: { maxMB: num(0.1, 500), storeMaxMB: num(0, 100), defaultAi: oneOf(...ACCESS), chunkChars: int(1000, 100_000), crosscheck: bool, keepOriginal: bool },
+  reviews: { enabled: bool, repos: strList, source: oneOf("auto", "gh", "mcp"), gh: str, agent: str, minComments: int(2, 100), minPersons: int(1, 50), similarity: num(0.1, 0.95), days: int(1, 3650), maxPrs: int(1, 500), checkAllConventions: bool },
+  crosscheck: { enabled: bool, model: str, kinds: listOf("knowledge", "memory", "skill", "error", "glossary") },
+  gym: { enabled: bool, model: str, agent: str, runsPerArm: int(1, 20), timeoutMin: num(1, 240), maxTasksPerRun: int(1, 50), consequence: oneOf("bericht", "archivieren") },
+  quality: {
+    weights: { belegt: num(0, 1), frische: num(0, 1), hinweise: num(0, 1), zweifel: num(0, 1), anker: num(0, 1), gym: num(0, 1) },
+    lowThreshold: int(0, 100),
+    hintBoost: num(0, 1),
+    freshDays: num(1, 3650),
+  },
   curatorIntervalDays: num(0.01, 365),
   curatorMaxChanges: int(1, 100),
   consolidate: bool,

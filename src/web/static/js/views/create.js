@@ -7,7 +7,7 @@ const SKILL_BODY = "## When to use\n\n\n## Steps\n1. \n\n## Pitfalls\n- \n\n## V
 const ERROR_BODY = "## Symptom\n```\n\n```\n\n## Ursache\n\n\n## Lösung\n1. \n\n## Prüfung\n"
 const MEMORY_BODY = { entscheidung: "## Entscheidung\n\n\n## Begründung\n\n\n## Alternativen\n- ", vorgabe: "", erfahrung: "" }
 
-const TITLES = { dokument: "Neues Dokument", skill: "Neuer Skill", fehler: "Neuer Fehler", glossar: "Neuer Glossar-Begriff", erinnerung: "Neue Erinnerung", agent: "Neuer Agent" }
+const TITLES = { dokument: "Neues Dokument", skill: "Neuer Skill", fehler: "Neuer Fehler", glossar: "Neuer Glossar-Begriff", erinnerung: "Neue Erinnerung", agent: "Neuer Agent", snippet: "Neues Snippet", prompt: "Neuer Prompt" }
 
 async function bodyEditor(doc, opts = {}) {
   const box = h("div", { class: "cm-mini" })
@@ -148,6 +148,39 @@ export default async function create(ctx) {
           },
         }, icon("check", 14), "Anlegen"),
         h("a", { class: "btn", href: "#/liste/agent", text: "Abbrechen" }),
+      ),
+    )
+    return
+  }
+
+  if (what === "snippet" || what === "prompt") {
+    const isSnippet = what === "snippet"
+    const lang = h("input", { class: "input", placeholder: "Sprache (java, ts, sql …)", value: "" })
+    const agent = h("input", { class: "input", placeholder: "empfohlener Agent (optional)" })
+    const model = h("input", { class: "input", placeholder: "empfohlenes Modell (optional)" })
+    const { box, ed } = await bodyEditor(isSnippet ? "```java\n${typ} ${name} = new ${typ}();\n```" : "Prüfe {{auswahl}} für Ticket {{ticket}} auf Branch {{branch}}.", { placeholder: isSnippet ? "Code mit Platzhaltern ${name} oder ${name:standard}" : "Prompt mit Variablen {{ticket}}, {{auswahl}}, {{datei}} …" })
+    put(
+      card,
+      h("p", { class: "muted", text: isSnippet ? "Platzhalter ${name} bzw. ${name:standard} werden beim Einfügen ausgefüllt. Einfügen per Kopieren, mit smith snippet <name> oder als IntelliJ-Live-Template (Export)." : "Variablen {{…}} füllt /prompt <name> aus den Argumenten und dem Kontext (branch, ticket, projekt, datum, aufgabe). Neue Prompts wirken ohne Neustart." }),
+      field("Titel", title),
+      field("Beschreibung", desc),
+      field("Tags", tags),
+      isSnippet ? field("Sprache", lang) : h("div", { class: "fields" }, field("Agent", agent), field("Modell", model)),
+      field(isSnippet ? "Code" : "Prompt", box),
+      h(
+        "div",
+        { class: "toolbar" },
+        h("button", {
+          class: "btn primary",
+          type: "button",
+          onclick: async () => {
+            if (!title.value.trim()) return title.focus()
+            const fields = isSnippet ? { language: lang.value.trim() || undefined } : { agent: agent.value.trim() || undefined, model: model.value.trim() || undefined }
+            const r = await act("entry.create", { kind: what, title: title.value.trim(), description: desc.value.trim() || undefined, body: ed.value, tags: tagList(), fields })
+            if (r?.target) location.hash = `#/eintrag/${r.target}`
+          },
+        }, icon("check", 14), "Anlegen"),
+        h("a", { class: "btn", href: `#/liste/${what}`, text: "Abbrechen" }),
       ),
     )
     return
