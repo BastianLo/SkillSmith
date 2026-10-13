@@ -6,7 +6,8 @@
   "description": "Self-maintaining knowledge for opencode: skills (skillsmith), knowledge base + glossary (docsmith), errors with fixes (errorsmith), tested Python scripts (toolsmith), project memories (memorysmith), relations and conflicts (doctor); a local web workplace (knowledge base with editor and [[links]], tasks and kanban board, projects with pipeline, agent tasks with proposal/approval in git worktrees, audit log, metrics and statistics) – background reviewers, curator, hybrid search, git-tracked changes.",
   "license": "MIT",
   "bin": {
-    "skillsmith": "./bin/skillsmith"
+    "skillsmith": "./bin/skillsmith",
+    "smith": "./bin/smith"
   },
   "engines": {
     "node": ">=22.6"

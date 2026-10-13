@@ -15,7 +15,7 @@
  * Strict CSP without inline scripts; security events go to the audit log (throttled).
  */
 import { randomBytes, timingSafeEqual } from "node:crypto"
-import { existsSync, readFileSync, statSync } from "node:fs"
+import { existsSync, readFileSync, statSync, chmodSync } from "node:fs"
 import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 import { ActionError, executeAction, needsStrongToken, toActionError, type ActionRequest } from "../core/actions"
@@ -127,6 +127,8 @@ export class WebServer {
         const link = `http://${o.host === "0.0.0.0" ? "127.0.0.1" : o.host}:${port}/#t=${token}`
         this.info = { url: link, port, token, pid: process.pid, directory: this.ctx.directory, startedAt: nowIso(), host: o.host }
         writeJsonAtomic(this.file, this.info)
+        // the token: readable by this user only (the smith CLI reads it)
+        chmodPrivate(this.file)
         this.ctx.log.info(`web view on http://${o.host}:${port}`)
         this.ctx.audit?.append({ actor: "system", category: "security", action: "web-start", result: "ok", message: `Weboberfläche auf ${o.host}:${port}${o.token ? "" : " – ohne Token"}${o.readOnly ? " · nur lesend" : ""}` })
         return this.info
@@ -151,6 +153,7 @@ export class WebServer {
       try {
         // keep the token for tokenRotate: false (bookmarks keep working)
         writeJsonAtomic(this.file, this.ctx.options.web.tokenRotate ? {} : { token: cur.token })
+        chmodPrivate(this.file)
       } catch {
         // ignore
       }
@@ -347,5 +350,13 @@ export class WebServer {
     const type = STATIC_TYPES[extname(full)]
     if (!type) return new Response("not found", { status: 404 })
     return new Response(readFileSync(full), { headers: this.headers(type, { "cache-control": rel.startsWith("vendor/") ? "max-age=86400" : "no-cache" }) })
+  }
+}
+
+function chmodPrivate(file: string): void {
+  try {
+    chmodSync(file, 0o600)
+  } catch {
+    // best effort (filesystems without modes)
   }
 }

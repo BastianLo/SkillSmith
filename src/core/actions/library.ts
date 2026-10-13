@@ -131,12 +131,14 @@ export const LIBRARY_ACTIONS: ActionDef[] = [
     smith: "memorysmith",
     local: true,
     readOnlySafe: true,
-    args: { project: { t: "string", max: 64, optional: true }, base: { t: "string", max: 200, optional: true, pattern: /^[\w./~^-]*$/ } },
+    args: { project: { t: "string", max: 64, optional: true }, dir: { t: "string", max: 1000, optional: true }, base: { t: "string", max: 200, optional: true, pattern: /^[\w./~^-]*$/ } },
     async run({ ctx }, _run, a) {
       if (!ctx.reviews) throw new GuardError("Review-Wissen nicht verfügbar")
       const p = a.project ? ctx.projects.get(a.project) : undefined
       if (a.project && !p?.homePath) throw new GuardError(`Projekt ${a.project} hat kein home_path`)
-      const r = await ctx.reviews.prCheck(p?.homePath ? expandPath(p.homePath) : ctx.worktree, a.base || undefined)
+      // the smith CLI passes its working directory (a git repository of the user; read only)
+      if (a.dir && !/^\//.test(a.dir)) throw new GuardError("dir muss ein absoluter Pfad sein")
+      const r = await ctx.reviews.prCheck(a.dir || (p?.homePath ? expandPath(p.homePath) : ctx.worktree), a.base || undefined)
       return { message: r.summary, data: r }
     },
   }),
