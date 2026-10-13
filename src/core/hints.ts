@@ -174,12 +174,22 @@ export class HintEngine {
     ])
     // semantic: clearly similar; BM25 only: most query terms (≥ 3) in the record
     const similarSession = (h: HistoryHit) => (h.similarity ?? 0) >= sessionMin || (h.matched.length >= 3 && h.coverage >= 0.75)
+    // quality (5c): among the strong hits, entries with a high score come first
+    const boost = this.ctx.options.quality.hintBoost
+    const byQuality = (hits: SearchHit[]): SearchHit[] => {
+      if (!boost || !this.ctx.quality) return hits
+      const rank = (h: SearchHit) => {
+        const q = h.owned ? this.ctx.quality!.score(h.kind, h.name) : undefined
+        return Math.max(h.score, 1e-6) * (1 + boost * ((q ?? 50) / 100 - 0.5))
+      }
+      return hits.map((h, i) => ({ h, i, r: rank(h) })).sort((a, b) => b.r - a.r || a.i - b.i).map((x) => x.h)
+    }
     return {
-      skills: skills.filter(isStrong).slice(0, o.max),
+      skills: byQuality(skills.filter(isStrong)).slice(0, o.max),
       glossary: o.glossary ? this.glossaryIn(text, new Set(state.explained ?? []), o.maxGlossary) : [],
-      knowledge: knowledge.filter(isStrong).slice(0, 2),
-      errors: errors.filter((h) => (h.confidence >= o.minScore && h.matched.length >= 2) || (h.similarity ?? 0) >= minSim).slice(0, 2),
-      scripts: scripts.filter(isStrong).slice(0, 2),
+      knowledge: byQuality(knowledge.filter(isStrong)).slice(0, 2),
+      errors: byQuality(errors.filter((h) => (h.confidence >= o.minScore && h.matched.length >= 2) || (h.similarity ?? 0) >= minSim)).slice(0, 2),
+      scripts: byQuality(scripts.filter(isStrong)).slice(0, 2),
       sessions: sessions.filter(similarSession).slice(0, 2),
       memories: await this.memories(query, vec, loaded, isStrong).catch(() => []),
     }

@@ -10,8 +10,8 @@ import { join } from "node:path"
 import type { Options } from "../config"
 import { smithWriteMode } from "../config"
 import type { Logger } from "../log"
-import type { ActionKind, Entry, Evidence, GlossaryMeaning, Kind, Meta, Relation, RelationType, Run, TestStatus, Tier } from "../types"
-import { isUser, MEMORY_TYPES, RELATION_TYPES } from "../types"
+import type { ActionKind, AnchorRecord, Entry, Evidence, GlossaryMeaning, Kind, Meta, ProvenanceSource, ProvenanceType, Relation, RelationType, Run, TestStatus, Tier } from "../types"
+import { isUser, MEMORY_TYPES, PROVENANCE_TYPES, RELATION_TYPES } from "../types"
 import { ensureDir, listFiles, readJson, removePath, sleep, writeJsonAtomic } from "../util/fs"
 import { fold, nowIso, oneLine, shortId, truncate } from "../util/text"
 import { str, strArray } from "./frontmatter"
@@ -22,6 +22,7 @@ import type { Scope } from "./scope"
 import type { Redactor } from "./redact"
 import { lintBody, validateBody, validateDescription, validateName } from "./skill"
 import type { Store } from "./store"
+import { evidenceSource, findParagraph, nextProvenance, paragraphs, PROVENANCE_KINDS } from "./provenance"
 import { ClaimedError, StoreError } from "./store"
 
 export class GuardError extends Error {}
@@ -92,6 +93,20 @@ export function deriveTags(kind: Kind, c: EntryContent): string[] {
   return normalizeTags([...extra, ...parts]).slice(0, 5)
 }
 
+/** A source for one paragraph (5c): a verbatim quote, or a reference that appears in the transcript. */
+export interface SourceArg {
+  /** start of the paragraph (≥ 12 characters, as in the text) */
+  paragraph: string
+  /** verbatim quote from the transcript / project doc / session */
+  evidence?: string
+  type?: ProvenanceType
+  /** commit, ticket, url, code ref or "kind:name" */
+  ref?: string
+}
+
+/** Pins the code anchors of a text (src/core/anchors.ts). */
+export type AnchorPin = (text: string, previous: AnchorRecord[], repin?: string[]) => Promise<{ records: AnchorRecord[]; unresolved: string[] }>
+
 export interface CreateArgs {
   name: string
   title?: string
@@ -107,6 +122,8 @@ export interface CreateArgs {
   approved?: boolean
   /** knowledge: folder below the tier */
   folder?: string
+  /** sources per paragraph */
+  sources?: SourceArg[]
 }
 
 export interface UpdateArgs {
@@ -120,6 +137,10 @@ export interface UpdateArgs {
   reason?: string
   evidence?: string
   approved?: boolean
+  /** sources per paragraph */
+  sources?: SourceArg[]
+  /** code anchors to pin again (the text was adapted to changed code) */
+  repinAnchors?: string[]
 }
 
 export interface PublishArgs {
@@ -152,6 +173,7 @@ export class Ops {
   readonly stagedDir: string
   readonly shadowFile: string
   private recheck?: ScriptRecheck
+  private anchorPin?: AnchorPin
   private sim?: SimilarityProvider
   private mem?: MemoryDb
   private graph?: Graph
@@ -208,6 +230,109 @@ export class Ops {
     throw new GuardError(
       `a very similar ${spec(kind).label} entry already exists: "${dup.name}"${where}, similarity ${dup.similarity.toFixed(2)}. Update that entry instead of creating a duplicate${kind === "skill" ? " (skillsmith_patch / skillsmith_rewrite)" : ""}.`,
     )
+  }
+
+  /** code anchors: resolve [[code:…]] on every write (5c) */
+  setAnchorPin(fn: AnchorPin | undefined): void {
+    this.anchorPin = fn
+  }
+
+  /** A source given for one paragraph – verified like evidence (quote) or by its reference in the transcript. */
+  private verifySource(run: Run, s: SourceArg, body: string, approved: boolean): ProvenanceSource {
+    const at = nowIso()
+    const type = s.type && (PROVENANCE_TYPES as readonly string[]).includes(s.type) ? s.type : undefined
+    if (s.evidence && s.evidence.trim()) {
+      const ev = this.verifyEvidence(run, s.evidence)
+      if (!ev && !approved) throw new GuardError(`the source for paragraph "${truncate(s.paragraph, 40)}" was not found verbatim in the transcript; copy the passage exactly`)
+      this.scanSecrets(s.evidence)
+      const base = ev ? evidenceSource(ev, run.id, "paragraph") : { type: "user" as const, quote: truncate(oneLine(s.evidence), 300), at, runId: run.id, scope: "paragraph" as const }
+      return type ? { ...base, type, ...(s.ref ? { ref: s.ref } : {}) } : base
+    }
+    const ref = (s.ref ?? "").trim()
+    if (!type || !ref) throw new GuardError(`a source for paragraph "${truncate(s.paragraph, 40)}" needs evidence (a verbatim quote) or type + ref`)
+    if (!approved) {
+      if (type === "code") {
+        if (!body.includes(`[[code:${ref}]]`)) throw new GuardError(`code source ${ref}: anchor the code in the text with [[code:${ref}]]`)
+      } else if (type === "doc") {
+        const i = ref.indexOf(":")
+        if (i <= 0 || !this.d.store.getOwned(ref.slice(0, i) as Kind, ref.slice(i + 1))) throw new GuardError(`document source ${ref} not found (use kind:name)`)
+      } else if (!normalizeQuote(`${run.userText ?? ""} ${run.haystack ?? ""}`).includes(normalizeQuote(ref))) {
+        throw new GuardError(`source ${type} ${ref} does not appear in the transcript; do not invent sources`)
+      }
+    }
+    return { type, ref: truncate(ref, 300), at, runId: run.id, scope: "paragraph" }
+  }
+
+  /**
+   * Code anchors and provenance of a write (5c): pins new [[code:…]] anchors and carries the
+   * sources per paragraph. Mutates metaPatch, returns warnings for the agent.
+   */
+  private async contentMeta(run: Run, kind: Kind, body: string, rec: Entry | undefined, metaPatch: Partial<Meta>, sources: SourceArg[] | undefined, approved: boolean, repin?: string[]): Promise<string[]> {
+    const o = this.o()
+    const warnings: string[] = []
+    if (o.anchors?.enabled && this.anchorPin && kind !== "project") {
+      const prev = rec?.meta?.anchors ?? []
+      if (prev.length || body.includes("[[code:")) {
+        try {
+          const { records, unresolved } = await this.anchorPin(body, prev, repin)
+          if (JSON.stringify(records) !== JSON.stringify(prev)) metaPatch.anchors = records.length ? records : undefined
+          if (unresolved.length) warnings.push(`code anchors not found in the projects: ${unresolved.join(", ")} (checked again later)`)
+        } catch (err) {
+          this.d.log.warn(`anchors: ${String(err)}`)
+        }
+      }
+    }
+    if (!o.provenance?.enabled || !PROVENANCE_KINDS.includes(kind)) return warnings
+    const paras = paragraphs(body)
+    const per = new Map<string, ProvenanceSource[]>()
+    for (const s of sources ?? []) {
+      const p = findParagraph(paras, s.paragraph ?? "")
+      if (!p) throw new GuardError(`sources: paragraph starting with "${truncate(s.paragraph ?? "", 40)}" not found in the new text (copy ≥ 12 characters of its start)`)
+      per.set(p.key, [...(per.get(p.key) ?? []), this.verifySource(run, s, body, approved || isUser(run))])
+    }
+    const user = isUser(run)
+    const general: ProvenanceSource[] = user
+      ? [{ type: "user", at: nowIso(), runId: run.id, scope: "change", ...(approved && run.actor !== "web" ? { ref: "freigabe" } : {}) }]
+      : (metaPatch.evidence ?? []).map((ev) => evidenceSource(ev, run.id))
+    const next = nextProvenance(body, rec?.meta?.provenance, general, per)
+    if (JSON.stringify(next.provenance) !== JSON.stringify(rec?.meta?.provenance ?? {})) metaPatch.provenance = next.provenance
+    const mode = o.provenance.perParagraph
+    if (!user && !approved && mode !== "aus" && next.withoutOwn.length >= 2) {
+      const list = next.withoutOwn.map((p) => `"${truncate(p.text.replace(/\s+/g, " "), 50)}"`).join(", ")
+      if (mode === "pflicht") throw new GuardError(`each changed paragraph needs its own source: pass sources [{paragraph, evidence}] for ${list}`)
+      warnings.push(`provenance: ${next.withoutOwn.length} changed paragraphs share one evidence – next time pass sources [{paragraph, evidence}] per paragraph`)
+    }
+    return warnings
+  }
+
+  /** Pin or re-pin the code anchors of an entry (metadata only; job "anchors", "passt noch"). */
+  async setAnchors(run: Run, kind: Kind, name: string, anchors: AnchorRecord[], reason?: string): Promise<string> {
+    this.requireOwned(kind, name)
+    this.aiGate(run, kind, name, "meta")
+    await this.awaitClaims(run, this.claims(kind, name), `${kind} "${name}"`)
+    await this.d.store.editMeta(run, kind, name, (m) => {
+      m.anchors = anchors.length ? anchors : undefined
+    }, "anchor", reason)
+    this.applied(run, "anchor", kind, name, reason)
+    return `${anchors.length} Code-Anker von "${name}" verankert`
+  }
+
+  /** The user names the source of one paragraph (metadata only). */
+  async addSource(run: Run, kind: Kind, name: string, a: { paragraph: string; type: ProvenanceType; ref?: string; quote?: string }): Promise<string> {
+    const rec = this.requireOwned(kind, name)
+    if (!isUser(run)) throw new GuardError("only the user sets sources by hand")
+    const p = findParagraph(paragraphs(rec.body), a.paragraph)
+    if (!p) throw new GuardError("Absatz nicht gefunden")
+    if (a.quote) this.scanSecrets(a.quote)
+    const src: ProvenanceSource = { type: a.type, ...(a.ref ? { ref: truncate(a.ref, 300) } : {}), ...(a.quote ? { quote: truncate(oneLine(a.quote), 300) } : {}), at: nowIso(), runId: run.id, scope: "paragraph" }
+    await this.awaitClaims(run, this.claims(kind, name), `${kind} "${name}"`)
+    await this.d.store.editMeta(run, kind, name, (m) => {
+      const prov = { ...(m.provenance ?? {}) }
+      prov[p.key] = [src, ...(prov[p.key] ?? [])].slice(0, 6)
+      m.provenance = prov
+    }, "source", `Quelle für Absatz ${p.index + 1}`)
+    this.applied(run, "anchor", kind, name, `Quelle ${a.type}${a.ref ? ` ${a.ref}` : ""} für Absatz ${p.index + 1}`, "source")
+    return `Quelle für Absatz ${p.index + 1} gespeichert`
   }
 
   /** toolsmith registers a re-check used when staged scripts are approved */
@@ -543,7 +668,8 @@ export class Ops {
       throw new GuardError(`a ${spec(kind).label} entry named "${c.name}" already exists; update it or choose another name`)
     }
     if (!a.approved) await this.duplicateGate(run, kind, c)
-    const args = { name: c.name, title: c.title, description: c.description, tags: c.tags, fields: c.fields, body: c.body, reason: a.reason, candidateId: a.candidateId || undefined, userQuote: a.userQuote || undefined, evidence: a.evidence || undefined, chainId: a.chainId || undefined }
+    warnings.push(...(await this.contentMeta(run, kind, c.body, undefined, metaPatch, a.sources, approved)))
+    const args = { name: c.name, title: c.title, description: c.description, tags: c.tags, fields: c.fields, body: c.body, reason: a.reason, candidateId: a.candidateId || undefined, userQuote: a.userQuote || undefined, evidence: a.evidence || undefined, chainId: a.chainId || undefined, sources: a.sources }
     const diverted = this.divert(run, "create", kind, c.name, a.reason, args)
     if (diverted) return diverted
     await this.awaitClaims(
@@ -625,8 +751,9 @@ export class Ops {
       c.body !== rec.body ||
       JSON.stringify(c.tags) !== JSON.stringify(rec.tags) ||
       JSON.stringify(c.fields) !== JSON.stringify(rec.fields)
-    if (!changed && !metaPatch.evidence) return `"${a.name}" unchanged`
-    const args = { name: c.name, title: c.title, description: c.description, tags: c.tags, fields: c.fields, body: c.body, reason: a.reason, evidence: a.evidence }
+    if (!changed && !metaPatch.evidence && !a.repinAnchors?.length) return `"${a.name}" unchanged`
+    warnings.push(...(await this.contentMeta(run, kind, c.body, rec, metaPatch, a.sources, approved, a.repinAnchors)))
+    const args = { name: c.name, title: c.title, description: c.description, tags: c.tags, fields: c.fields, body: c.body, reason: a.reason, evidence: a.evidence, sources: a.sources, repinAnchors: a.repinAnchors }
     const diverted = this.divert(run, action, kind, a.name, a.reason, args, proposal)
     if (diverted) return diverted
     await this.awaitClaims(run, this.claims(kind, a.name), `${kind} "${a.name}"`)
@@ -643,7 +770,7 @@ export class Ops {
     return `updated ${spec(kind).label} "${a.name}"${warnings.length ? `\nwarnings: ${warnings.join("; ")}` : ""}`
   }
 
-  async patch(run: Run, kind: Kind, a: { name: string; oldText: string; newText: string; reason?: string; evidence?: string; approved?: boolean }): Promise<string> {
+  async patch(run: Run, kind: Kind, a: { name: string; oldText: string; newText: string; reason?: string; evidence?: string; approved?: boolean; sources?: SourceArg[] }): Promise<string> {
     const rec = this.requireOwned(kind, a.name)
     const proposal = this.aiGate(run, kind, a.name, "content")
     if (!a.approved) this.budget(run, "patch", kind)
@@ -659,7 +786,9 @@ export class Ops {
       metaPatch.verifiedAt = nowIso()
     }
     if (kind === "knowledge" && rec.meta?.doubts?.length) metaPatch.doubts = undefined
-    const diverted = this.divert(run, "patch", kind, a.name, a.reason, { name: a.name, oldText: a.oldText, newText: a.newText, reason: a.reason, evidence: a.evidence }, proposal)
+    const patched = rec.body.replace(a.oldText, () => a.newText)
+    const patchWarnings = await this.contentMeta(run, kind, patched, rec, metaPatch, a.sources, !!a.approved || isUser(run))
+    const diverted = this.divert(run, "patch", kind, a.name, a.reason, { name: a.name, oldText: a.oldText, newText: a.newText, reason: a.reason, evidence: a.evidence, sources: a.sources }, proposal)
     if (diverted) return diverted
     await this.awaitClaims(run, this.claims(kind, a.name), `${kind} "${a.name}"`)
     const max = this.maxBody(kind)
@@ -677,7 +806,7 @@ export class Ops {
       metaPatch,
     )
     this.applied(run, "patch", kind, a.name, a.reason)
-    return `patched "${a.name}"`
+    return `patched "${a.name}"${patchWarnings.length ? `\nwarnings: ${patchWarnings.join("; ")}` : ""}`
   }
 
   async merge(
@@ -719,6 +848,16 @@ export class Ops {
     if (diverted) return diverted
     await this.awaitClaims(run, this.claims(kind, ...sources, target), `${kind} ${[...new Set([...sources, target])].join(", ")}`)
     await this.d.store.merge(run, kind, { sources, content: c, reason: a.reason })
+    if (this.o().provenance?.enabled && PROVENANCE_KINDS.includes(kind)) {
+      // paragraphs taken over unchanged keep the sources they had in their entry
+      const union: Record<string, ProvenanceSource[]> = {}
+      for (const r of recs) for (const [k, v] of Object.entries(r.meta?.provenance ?? {})) union[k] = [...(union[k] ?? []), ...v]
+      const general: ProvenanceSource[] = isUser(run) ? [{ type: "user", at: nowIso(), runId: run.id, scope: "change" }] : recs.map((r) => ({ type: "doc" as const, ref: `${kind}:${r.name}`, at: nowIso(), runId: run.id, scope: "change" as const }))
+      const next = nextProvenance(c.body, union, general)
+      await this.d.store.editMeta(run, kind, target, (m) => {
+        m.provenance = next.provenance
+      })
+    }
     this.applied(run, "merge", kind, target, a.reason, `absorbed ${sources.filter((s) => s !== target).join(", ")}`)
     return `merged ${sources.filter((s) => s !== target).join(", ")} into "${target}" (absorbed entries archived)${warnings.length ? `\nwarnings: ${warnings.join("; ")}` : ""}`
   }

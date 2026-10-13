@@ -2,6 +2,8 @@ import type { Options } from "../config"
 import type { Logger } from "../log"
 import type { Client } from "./agent-runner"
 import type { AgentTasks } from "./agent-tasks"
+import type { Anchors } from "./anchors"
+import type { QualityEngine } from "./quality"
 import type { AuditLog } from "./audit"
 import type { EventBus } from "./bus"
 import type { Doctor } from "./doctor"
@@ -85,6 +87,10 @@ export interface Ctx {
   tasks: Tasks
   /** local pipeline per project */
   pipeline: Pipeline
+  /** code anchors [[code:…]] (5c) */
+  anchors?: Anchors
+  /** quality score per entry (5c) */
+  quality?: QualityEngine
   /** tasks delegated to opencode agents */
   agentTasks: AgentTasks
   /** review queue and curator of this instance (web actions "review now", "curate") */

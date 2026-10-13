@@ -2,6 +2,7 @@ import { get, post } from "../api.js"
 import { AI_ACCESS, editHref, entryHref, fmtDate, graphHref, h, icon, kindOf, nameOf, put, swap } from "../dom.js"
 import { auditTab, conflictsBlock, entryHead, evidenceBlock, factsBlock, historyBlock, linksBlock, mdBlock, relationsBlock, relevanceLine, targetPicker, usageTab, versionsTab } from "../parts.js"
 import { act, app, confirmDialog, fill, modal, moreButton, previewDialog, promptDialog, tabBar, toast } from "../ui.js"
+import { anchorsBlock, provenanceTab, qualityBlock, qualityChip } from "../quality.js"
 
 const STORE = new Set(["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"])
 
@@ -228,7 +229,7 @@ export default async function entry(ctx) {
   const draw = (data) => {
     const kind = kindOf(id)
     const isStore = STORE.has(kind)
-    const head = h("div", { class: "page-head" }, h("div", { class: "grow" }, entryHead(data), relevanceLine(data.relevance)))
+    const head = h("div", { class: "page-head" }, h("div", { class: "grow" }, entryHead(data), h("div", { class: "row-flex" }, relevanceLine(data.relevance), qualityChip(data.quality?.score))))
     const actions = h(
       "div",
       { class: "toolbar" },
@@ -256,6 +257,7 @@ export default async function entry(ctx) {
       [
         ["inhalt", "Inhalt"],
         ["links", "Verknüpfungen", data.relations.filter((r) => r.type !== "not_related").length + (data.backlinks?.length || 0) || ""],
+        data.provenance ? ["herkunft", "Herkunft", data.provenance.counts.unbelegt + data.provenance.counts.veraltet || ""] : null,
         isStore ? ["versionen", "Versionen"] : null,
         ["audit", "Audit"],
         isStore ? ["nutzung", "Nutzung"] : null,
@@ -276,11 +278,13 @@ export default async function entry(ctx) {
           "div",
           { class: "cols" },
           h("div", { class: "stack" }, h("div", { class: "card" }, mdBlock(data.body, { section: ctx.query.get("abschnitt") || undefined, checkboxes: kind === "knowledge" && !app.readOnly, onToggle: kind === "knowledge" && !app.readOnly ? async (line, done) => (await act("checklist.toggle", { target: id, line, done }, { quiet: true })) && load() : undefined })), evidenceBlock(data), historyBlock(data)),
-          h("div", { class: "stack" }, factsBlock(data), data.backlinks?.length ? linksBlock({ ...data, links: [], mentions: [] }) : null),
+          h("div", { class: "stack" }, qualityBlock(data), anchorsBlock(data, id, load), factsBlock(data), data.backlinks?.length ? linksBlock({ ...data, links: [], mentions: [] }) : null),
         ),
       )
     } else if (tab === "links") {
       put(body, h("div", { class: "grid two" }, relationsBlock(data, { onChange: load }), linksBlock(data, { onChange: load })))
+    } else if (tab === "herkunft") {
+      put(body, provenanceTab(data, id, load))
     } else if (tab === "versionen") {
       const box = h("div")
       put(body, box)

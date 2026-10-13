@@ -113,7 +113,48 @@ export interface Meta {
   doubts?: Array<{ at: string; note: string; related?: string; runId?: string }>
   /** outgoing relations (symmetric ones are stored on the lexicographically smaller node) */
   relations?: Relation[]
+  /** code anchors of the text ([[code:…]]): what was anchored and the hash of the code then */
+  anchors?: AnchorRecord[]
+  /** sources per paragraph (key = hash of the paragraph text) */
+  provenance?: Record<string, ProvenanceSource[]>
   history: HistoryEntry[]
+}
+
+/** A pinned code anchor (5c). */
+export interface AnchorRecord {
+  /** reference as written ("TokenStore#revoke", "src/a.ts#L4-L9") */
+  ref: string
+  /** project (name of a project entry, or the plugin's project) */
+  project?: string
+  /** file relative to the project root */
+  path: string
+  kind: "file" | "class" | "method" | "lines"
+  symbol?: string
+  member?: string
+  lines?: [number, number]
+  /** declaration line of a class / method */
+  signature?: string
+  /** hash of the anchored code (whitespace-insensitive) */
+  hash: string
+  /** HEAD of the project repository when anchored (diff "then ↔ now") */
+  commit?: string
+  at: string
+}
+
+export const PROVENANCE_TYPES = ["transcript", "user", "session", "commit", "ticket", "confluence", "code", "doc", "file", "comment", "url"] as const
+export type ProvenanceType = (typeof PROVENANCE_TYPES)[number]
+
+/** Where a statement of a paragraph comes from (5c). */
+export interface ProvenanceSource {
+  type: ProvenanceType
+  /** id of the source: session id, commit, ticket, url, code ref, "kind:name", "datei.pdf#S3" */
+  ref?: string
+  /** verbatim quote of the source supporting the paragraph */
+  quote?: string
+  at: string
+  runId?: string
+  /** the source was given for the whole change, not for this paragraph alone */
+  scope?: "paragraph" | "change"
 }
 
 export interface GlossaryMeaning {
@@ -201,6 +242,7 @@ export type ActionKind =
   | "supersede"
   | "state"
   | "result"
+  | "anchor"
 
 /** Non-entry files a run may change: settings.json, gym tasks, review knowledge. */
 export type SystemTarget = "settings" | "gym"

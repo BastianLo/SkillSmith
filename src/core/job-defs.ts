@@ -115,6 +115,15 @@ export const BUILTIN_JOBS: JobDef[] = [
     run: (ctx, jr) => reviewAgents(ctx, jr),
   },
   {
+    id: "anchors",
+    label: "Code-Anker prüfen",
+    description: "Verankert neue [[code:…]]-Anker und prüft nach neuen Commits in den Projekten, ob der verankerte Code unverändert, geändert, verschoben oder gelöscht ist (Eingang „Code geändert“).",
+    area: "anchors",
+    defaults: () => ({ start: true, intervalMin: 15 }),
+    unavailable: (ctx) => (!ctx.options.anchors.enabled ? "Code-Anker sind aus" : !ctx.anchors ? "nicht verfügbar" : undefined),
+    run: (ctx, jr) => ctx.anchors!.runJob(jr.trigger, jr.trigger === "von Hand"),
+  },
+  {
     id: "prune",
     label: "Aufräumen",
     description: "Alte Logs, Audit-Ereignisse und Metriken nach den Aufbewahrungsfristen löschen; alte Session-Zustände entfernen.",

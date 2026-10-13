@@ -298,6 +298,18 @@ await page.waitForTimeout(800)
   await page.screenshot({ path: join(shots, "f13-job-verlauf.png") })
 }
 
+// 14. code anchors (5c): the changed method is confirmed with "Passt noch"
+{
+  await go("#/code?pfad=src%2FTokenStore.java&projekt=kundenportal", 1500)
+  const row = page.locator(".anchor-row", { hasText: "TokenStore#revoke" }).first()
+  await row.getByRole("button", { name: "Passt noch" }).click()
+  await page.waitForTimeout(1500)
+  const e = await api("entry?id=knowledge%3Arefresh-token-sperren")
+  const a = e.anchors.find((x: any) => x.ref === "TokenStore#revoke")
+  check("Code-Anker: „Passt noch“ übernimmt den neuen Code", a && a.status !== "changed", a?.status)
+  await page.screenshot({ path: join(shots, "f14-code-anker.png") })
+}
+
 await browser.close()
 const bad = results.filter((r) => !r[1])
 if (errors.length) console.error(errors.join("\n"))

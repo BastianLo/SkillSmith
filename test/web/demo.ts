@@ -18,6 +18,27 @@ import { JobScheduler } from "../../src/core/jobs"
 import { createLogger, withLogContext } from "../../src/log"
 import { BODY, ERROR_BODY, cmdRun, makeCtx, makeRun, tmp } from "../unit/helpers"
 
+const TOKEN_STORE = `package de.shop.auth;
+
+import java.util.Set;
+
+public class TokenStore {
+  private final Set<String> revoked;
+
+  public TokenStore(Set<String> revoked) {
+    this.revoked = revoked;
+  }
+
+  public void revoke(String id) {
+    revoked.add(id);
+  }
+
+  public String find(String id) {
+    return revoked.contains(id) ? null : id;
+  }
+}
+`
+
 const port = Number(process.argv[2] || process.env.DEMO_PORT || 47555)
 const DAY = 86_400_000
 
@@ -151,6 +172,7 @@ async function main() {
   g("init", "-q", "-b", "main")
   mkdirSync(join(home, "src"), { recursive: true })
   writeFileSync(join(home, "src", "LoginController.java"), "class LoginController {}\n")
+  writeFileSync(join(home, "src", "TokenStore.java"), TOKEN_STORE)
   writeFileSync(join(home, ".gitignore"), "target/\n")
   writeFileSync(join(home, "ci.sh"), `#!/bin/sh\nmkdir -p target/surefire-reports\nprintf '<testsuite tests="3" failures="0"><testcase classname="de.shop.LoginTest" name="login"/><testcase classname="de.shop.LoginTest" name="logout"/><testcase classname="de.shop.TokenTest" name="revoke"/></testsuite>' > target/surefire-reports/TEST-login.xml\necho "[INFO] Tests run: 3, Failures: 0"\n`)
   g("add", "-A")
@@ -252,6 +274,16 @@ async function main() {
   await web("agent.approve", { job, answers: "Sollen alle Geräte abgemeldet werden?\n→ Ja, alle Geräte." })
   await until((j) => j?.phase === "waiting" && j.waitingFor === "tests")
   ctx.agentTasks.start()
+
+  // 5c: knowledge anchored in code (one anchor changes after a commit), provenance per paragraph
+  await web("doc.create", { title: "Refresh-Token sperren", folder: "architektur", description: "Wo und wie der Logout das Refresh-Token sperrt", tags: ["auth"], body: "## Sperre\nBeim Logout ruft der Controller [[code:TokenStore#revoke]] auf; das setzt `REVOKED_AT`.\n\n## Suche\n[[code:TokenStore#find]] liefert gesperrte Tokens nicht mehr aus.\n\nDatei: [[code:src/TokenStore.java]]" })
+  writeFileSync(join(home, "src", "TokenStore.java"), TOKEN_STORE.replace("    revoked.add(id);", "    revoked.add(id);\n    audit.log(\"revoke\", id);"))
+  g("commit", "-qam", "audit revoke")
+  await ctx.anchors!.runJob("Start")
+  const hay = "Nutzer: Das Gateway cached geprüfte Tokens 60 Sekunden. Tool: JwtFilter.java: CACHE_TTL = Duration.ofSeconds(60); Revocations werden erst nach Ablauf des Caches wirksam."
+  const rv = makeRun(ctx, "reviewer", { smith: "docsmith", userText: hay, haystack: hay, limits: { maxNew: 2, maxChanges: 5, maxNotes: 2 } })
+  await ctx.ops.create(rv, "knowledge", { name: "gateway-token-cache", title: "Token-Cache im Gateway", description: "Geprüfte Tokens werden 60 Sekunden gecacht", tags: ["auth", "gateway"], body: "## Cache\nDas Gateway cached geprüfte Tokens 60 Sekunden.\n\n## Folge\nEine Sperre wirkt erst nach Ablauf des Caches.\n\n## Offen\nOb der Cache je Pod oder zentral liegt, ist nicht belegt.", evidence: "Das Gateway cached geprüfte Tokens 60 Sekunden", sources: [{ paragraph: "Eine Sperre wirkt erst", evidence: "Revocations werden erst nach Ablauf des Caches wirksam" }] })
+  await finalizeRun(ctx, rv, { ok: true })
 
   // metrics over 90 days (charts, calendar, heatmap, tools)
   const m = ctx.metrics!

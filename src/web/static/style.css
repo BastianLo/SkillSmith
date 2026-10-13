@@ -45,6 +45,7 @@
   --k-arbeitsstand: #2c9a57;
   --k-ergebnis: #9c6b39;
   --k-session: #94a0b2;
+  --k-code: #5b6b8c;
   --k-agent: #8a4fd1;
   --k-task: #0b7fbf;
   --k-project: #47566b;
@@ -93,6 +94,8 @@
     --k-arbeitsstand: #4cc38a;
     --k-ergebnis: #cf9a5f;
     --k-session: #8792a3;
+  --k-code: #8fa0c2;
+    --k-code: #8fa0c2;
     --k-agent: #b48cf0;
     --k-task: #4fb3ea;
     --k-project: #93a3b8;
@@ -863,3 +866,22 @@ svg text { fill: var(--muted); font-family: var(--sans); }
 .mode-table td.count { color: var(--faint); text-align: right; width: 50px; }
 .mode-table tr.sub td:first-child { padding-left: 26px; color: var(--muted); }
 .hidden-note { margin-top: 14px; color: var(--faint); font-size: 12.5px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* 5c: quality score, code anchors, provenance per paragraph */
+.big-number { font-size: 26px; font-weight: 650; line-height: 1; }
+.qbar { height: 6px; border-radius: 3px; background: var(--panel-3); overflow: hidden; margin: 3px 0 2px; }
+.qbar > span { display: block; height: 100%; background: var(--accent); }
+.anchor-row { padding: 8px 0; border-bottom: 1px solid var(--panel-3); display: flex; flex-direction: column; gap: 3px; }
+.anchor-row:last-child { border-bottom: 0; }
+.anchor-row .mono { word-break: break-all; }
+a.code-anchor { font-family: var(--mono); font-size: 0.92em; }
+.prov-list { display: flex; flex-direction: column; gap: 6px; }
+.prov-par { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 280px); gap: 12px; padding: 6px 10px; border-left: 4px solid transparent; background: var(--panel-2); border-radius: 4px; }
+.prov-par .prov-text { white-space: pre-wrap; font-size: 13.5px; }
+.prov-par .prov-src { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; font-size: 12px; }
+.prov-belegt { border-left-color: var(--ok, #2c9a57); }
+.prov-unbelegt { border-left-color: var(--warn, #c98a00); }
+.prov-veraltet { border-left-color: var(--danger, #c0392b); }
+.prov-neutral { border-left-color: transparent; opacity: 0.7; }
+@media (max-width: 720px) { .prov-par { grid-template-columns: 1fr; } }
+.prov-shared { border-left-style: dashed; }

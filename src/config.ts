@@ -303,6 +303,27 @@ export interface Options {
   /** schedules of the recurring jobs by id (see src/core/jobs.ts); unset fields keep the job's default */
   jobs: Record<string, JobConfig>
 
+  // --- quality: code anchors, provenance, quality score (5c) ------------------------------
+  anchors: {
+    /** pin [[code:…]] anchors on every write and check them after new commits */
+    enabled: boolean
+  }
+  provenance: {
+    enabled: boolean
+    /** sources per paragraph from the smiths: aus | warnen (hint to the agent) | pflicht (rejected without) */
+    perParagraph: "aus" | "warnen" | "pflicht"
+  }
+  quality: {
+    /** weights of the components (0 = not counted) */
+    weights: { belegt: number; frische: number; hinweise: number; zweifel: number; anker: number; gym: number }
+    /** below this score an entry is listed in the inbox ("Qualität prüfen") */
+    lowThreshold: number
+    /** hints prefer entries with a high score (0 = off) */
+    hintBoost: number
+    /** confirmation older than this many days counts as stale (freshness 0) */
+    freshDays: number
+  }
+
   // --- curator -------------------------------------------------------------------
   curatorIntervalDays: number
   curatorMaxChanges: number
@@ -575,6 +596,9 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
     inbox: { types: { change: "gebuendelt" }, changesDays: 14, maxPerGroup: 50 },
     log: { level: "info", areas: {}, days: 14, maxMB: 50 },
     jobs: {},
+    anchors: { enabled: true },
+    provenance: { enabled: true, perParagraph: "warnen" },
+    quality: { weights: { belegt: 0.35, frische: 0.15, hinweise: 0.2, zweifel: 0.15, anker: 0.15, gym: 0.2 }, lowThreshold: 40, hintBoost: 0.15, freshDays: 365 },
     curatorIntervalDays: 7,
     curatorMaxChanges: 5,
     consolidate: true,
@@ -942,6 +966,14 @@ const SCHEMA: Record<string, Rule> = {
   inbox: { types: recordOf(oneOf(...INBOX_MODES)), changesDays: num(1, 3650), maxPerGroup: int(5, 1000) },
   log: { level: oneOf(...LEVELS), areas: recordOf(oneOf(...LEVELS)), days: num(1, 3650), maxMB: num(1, 10_000) },
   jobs: recordOf(jobConfig),
+  anchors: { enabled: bool },
+  provenance: { enabled: bool, perParagraph: oneOf("aus", "warnen", "pflicht") },
+  quality: {
+    weights: { belegt: num(0, 1), frische: num(0, 1), hinweise: num(0, 1), zweifel: num(0, 1), anker: num(0, 1), gym: num(0, 1) },
+    lowThreshold: int(0, 100),
+    hintBoost: num(0, 1),
+    freshDays: num(1, 3650),
+  },
   curatorIntervalDays: num(0.01, 365),
   curatorMaxChanges: int(1, 100),
   consolidate: bool,

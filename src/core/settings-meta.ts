@@ -347,6 +347,19 @@ export const OPTION_META: Record<string, OptionMeta> = {
   "metrics.tokens": { label: "Tokens erfassen" },
   "metrics.webViews": { label: "Aufrufe der Weboberfläche erfassen" },
   "metrics.flushMs": { label: "Schreibpuffer (ms)" },
+  // qualität (5c)
+  "anchors.enabled": { label: "Code-Anker", help: "[[code:…]] beim Speichern verankern und nach neuen Commits prüfen" },
+  "provenance.enabled": { label: "Herkunft je Absatz", help: "Quellen je Absatz in den Metadaten führen" },
+  "provenance.perParagraph": { label: "Beleg je Absatz von den Smiths", help: "aus, warnen (Hinweis an den Agenten) oder pflicht (ohne Beleg abgelehnt)" },
+  "quality.weights.belegt": { label: "Gewicht: belegte Absätze" },
+  "quality.weights.frische": { label: "Gewicht: Alter der Belege / letzte Bestätigung" },
+  "quality.weights.hinweise": { label: "Gewicht: Trefferquote der Hinweise" },
+  "quality.weights.zweifel": { label: "Gewicht: offene Zweifel und Konflikte" },
+  "quality.weights.anker": { label: "Gewicht: intakte Code-Anker" },
+  "quality.weights.gym": { label: "Gewicht: Gym-Urteil" },
+  "quality.lowThreshold": { label: "Qualität prüfen unter", help: "Einträge unter diesem Wert kommen in den Eingang" },
+  "quality.hintBoost": { label: "Hinweise bevorzugen gute Einträge", help: "0 = aus" },
+  "quality.freshDays": { label: "Beleg gilt als alt nach (Tagen)" },
 }
 
 export function metaOf(path: string): OptionMeta {

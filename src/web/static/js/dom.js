@@ -143,6 +143,7 @@ export const KIND_LABEL = {
   arbeitsstand: "Arbeitsstand",
   ergebnis: "Ergebnis",
   session: "Session",
+  code: "Code",
   agent: "Agent",
   settings: "Einstellung",
 }
@@ -158,9 +159,10 @@ export const KIND_PLURAL = {
   arbeitsstand: "Arbeitsstände",
   ergebnis: "Ergebnisse",
   session: "Sessions",
+  code: "Code-Dateien",
   agent: "Agenten",
 }
-export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat", agent: "agent" }
+export const KIND_ICON = { skill: "skill", knowledge: "doc", glossary: "book", error: "error", script: "script", memory: "memory", task: "task", project: "project", arbeitsstand: "state", ergebnis: "result", session: "chat", agent: "agent", code: "code" }
 export const MEMORY_TYPES = { entscheidung: "Entscheidung", vorgabe: "Vorgabe", erfahrung: "Erfahrung" }
 export const MEMORY_PLURAL = { entscheidung: "Entscheidungen", vorgabe: "Vorgaben", erfahrung: "Erfahrungen" }
 export const STORE_KINDS = ["skill", "knowledge", "glossary", "error", "script", "memory", "task", "project"]
@@ -275,6 +277,7 @@ export const entryHref = (id, tab) => {
   if (/^task:/.test(id)) return `#/aufgabe/${encodeURIComponent(id.slice(5))}`
   if (/^project:/.test(id)) return `#/projekt/${encodeURIComponent(id.slice(8))}`
   if (/^session:/.test(id)) return `#/session/${encodeURIComponent(id.slice(8))}`
+  if (/^code:/.test(id)) return `#/code?knoten=${encodeURIComponent(id)}`
   return `#/eintrag/${encodeURIComponent(id)}${tab ? `?tab=${tab}` : ""}`
 }
 export const editHref = (id) => `#/editor/${encodeURIComponent(id)}`

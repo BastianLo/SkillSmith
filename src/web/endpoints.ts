@@ -45,4 +45,21 @@ export const ENDPOINTS: Record<string, Endpoint> = {
   // jobs page
   scheduled: (ctx) => ({ available: !!ctx.jobs, jobs: ctx.jobs?.list() ?? [] }),
   "scheduled/history": (ctx, q) => ctx.jobs?.history(q.get("id") ?? "") ?? [],
+  // code anchors (5c): files with anchored knowledge, one file with its entries and status
+  code: (ctx) => {
+    if (!ctx.anchors) return { available: false, files: [] }
+    const st = ctx.anchors.state()
+    return { available: true, checkedAt: st.checkedAt ?? null, files: ctx.anchors.byFile() }
+  },
+  "code/file": (ctx, q) => {
+    const path = q.get("path") ?? ""
+    const project = q.get("project") || undefined
+    const file = ctx.anchors?.byFile().find((f) => f.path === path && (!project || f.project === project))
+    if (!file) return { path, project: project ?? null, entries: [] }
+    const entries = file.entries.map((x) => {
+      const status = ctx.anchors!.statusOf(x.id).find((s) => s.ref === x.ref)
+      return { ...x, before: status?.before ?? null, after: status?.after ?? null, newPath: status?.newPath ?? null }
+    })
+    return { ...file, entries }
+  },
 }

@@ -15,6 +15,7 @@ import { graphAt, semanticMap, shortestPath } from "../core/graph-extra"
 import { aiAccessOf, isOwnDoc, meaningsOf, MEMORY_TYPE_LABEL, scriptFiles, spec, TIER_LABEL } from "../core/kinds"
 import { M } from "../core/metrics"
 import { inbox, markVisited } from "../core/inbox"
+import { provenanceView, PROVENANCE_KINDS } from "../core/provenance"
 import { projectPage, sessionPage, simulateHints, ticketPage } from "../core/productivity"
 import { radiusOf, storeExtras } from "../core/relevance"
 import { templates } from "../core/templates"
@@ -302,7 +303,7 @@ export class ReadApi {
       tierLabel: n.tier ? (TIER_LABEL[n.tier] ?? n.tier) : null,
       project: n.projectName || n.project || null,
       date: n.date ?? null,
-      ...(e ? { own: isOwnDoc(e), ai: aiAccessOf(e), folder: e.folder ?? null, pinned: !!e.meta?.pinned } : {}),
+      ...(e ? { own: isOwnDoc(e), ai: aiAccessOf(e), folder: e.folder ?? null, pinned: !!e.meta?.pinned, quality: PROVENANCE_KINDS.includes(e.kind) ? (this.ctx.quality?.of(e).score ?? null) : null } : {}),
       ...extra,
     }
   }
@@ -497,6 +498,24 @@ export class ReadApi {
       owned: e?.owned ?? null,
       pinned: !!e?.meta?.pinned,
       task: e?.kind === "task" ? ctx.tasks.view(e) : null,
+      ...(e ? this.qualityView(id, e) : {}),
+    }
+  }
+
+  /** Code anchors, provenance per paragraph and the quality score of an entry (5c). */
+  private qualityView(id: string, e: Entry): Record<string, unknown> {
+    const ctx = this.ctx
+    const status = ctx.anchors?.statusOf(id) ?? []
+    const anchors = (e.meta?.anchors ?? []).map((a) => {
+      const st = status.find((x) => x.ref === a.ref)
+      return { ...a, status: st?.status ?? null, newPath: st?.newPath ?? null, note: st?.note ?? null, before: st?.before ?? null, after: st?.after ?? null }
+    })
+    const own = isOwnDoc(e)
+    const provenance = PROVENANCE_KINDS.includes(e.kind) ? provenanceView(e, { anchors: status, own, exists: (x) => !!this.entryOf(x) }) : null
+    return {
+      anchors,
+      provenance: provenance ? { counts: provenance.counts, share: provenance.share ?? null, own, paragraphs: provenance.paragraphs.map((p) => ({ index: p.index, key: p.key, line: p.line, status: p.status, neutral: p.neutral, text: truncate(p.text, 400), sources: p.sources, fromHistory: !!p.fromHistory, reason: p.reason ?? null })) } : null,
+      quality: PROVENANCE_KINDS.includes(e.kind) ? (ctx.quality?.of(e) ?? null) : null,
     }
   }
 
