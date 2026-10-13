@@ -313,6 +313,20 @@ export interface Options {
     /** sources per paragraph from the smiths: aus | warnen (hint to the agent) | pflicht (rejected without) */
     perParagraph: "aus" | "warnen" | "pflicht"
   }
+  /** document import (5h) */
+  import: {
+    maxMB: number
+    /** originals up to this size are stored in the store (git) as attachment, larger ones only locally */
+    storeMaxMB: number
+    /** KI-Recht of imported documents */
+    defaultAi: "frei" | "vorschlag" | "lesen" | "privat"
+    /** characters per extraction section */
+    chunkChars: number
+    /** cross-check every finding against its quote (needs crosscheck.model) */
+    crosscheck: boolean
+    /** keep the original locally after "Übernehmen" */
+    keepOriginal: boolean
+  }
   /** review knowledge from GitHub (5f) */
   reviews: {
     enabled: boolean
@@ -639,6 +653,7 @@ export function defaults(env: NodeJS.ProcessEnv = process.env): Options {
     jobs: {},
     anchors: { enabled: true },
     provenance: { enabled: true, perParagraph: "warnen" },
+    import: { maxMB: 30, storeMaxMB: 5, defaultAi: "vorschlag", chunkChars: 6000, crosscheck: true, keepOriginal: false },
     reviews: { enabled: true, repos: [], source: "auto", gh: "", agent: "", minComments: 3, minPersons: 2, similarity: 0.45, days: 30, maxPrs: 30, checkAllConventions: false },
     crosscheck: { enabled: true, model: "", kinds: ["knowledge", "memory", "skill"] },
     gym: { enabled: true, model: "", agent: "build", runsPerArm: 3, timeoutMin: 10, maxTasksPerRun: 2, consequence: "bericht" },
@@ -1012,6 +1027,7 @@ const SCHEMA: Record<string, Rule> = {
   jobs: recordOf(jobConfig),
   anchors: { enabled: bool },
   provenance: { enabled: bool, perParagraph: oneOf("aus", "warnen", "pflicht") },
+  import: { maxMB: num(0.1, 500), storeMaxMB: num(0, 100), defaultAi: oneOf(...ACCESS), chunkChars: int(1000, 100_000), crosscheck: bool, keepOriginal: bool },
   reviews: { enabled: bool, repos: strList, source: oneOf("auto", "gh", "mcp"), gh: str, agent: str, minComments: int(2, 100), minPersons: int(1, 50), similarity: num(0.1, 0.95), days: int(1, 3650), maxPrs: int(1, 500), checkAllConventions: bool },
   crosscheck: { enabled: bool, model: str, kinds: listOf("knowledge", "memory", "skill", "error", "glossary") },
   gym: { enabled: bool, model: str, agent: str, runsPerArm: int(1, 20), timeoutMin: num(1, 240), maxTasksPerRun: int(1, 50), consequence: oneOf("bericht", "archivieren") },

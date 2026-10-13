@@ -62,6 +62,13 @@ export const ENDPOINTS: Record<string, Endpoint> = {
     const rounds = st.rounds.filter((r) => !entry || r.entry === entry).slice(-100).reverse()
     return { available: true, consequence: ctx.options.gym.consequence, tasks, rounds, suppressed: st.suppressed, archived: st.archived }
   },
+  // document import (5h)
+  imports: (ctx) => (ctx.importer?.list() ?? []).map((j) => ({ id: j.id, file: j.file, status: j.status, createdAt: j.createdAt, pages: j.pages.length, findings: j.findings.length, done: j.sections.filter((s) => s.done).length, total: j.sections.length, error: j.error ?? null })),
+  "imports/one": (ctx, q) => {
+    const j = ctx.importer?.get(q.get("id") ?? "")
+    if (!j) return { found: false }
+    return { found: true, ...j, changes: ctx.importer!.changes(j.id) }
+  },
   // review knowledge (5f)
   reviews: (ctx) => {
     if (!ctx.reviews) return { available: false, candidates: [], rules: [] }

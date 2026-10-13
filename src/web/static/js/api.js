@@ -90,6 +90,12 @@ export async function upload(file, target) {
   return parse(r)
 }
 
+/** Document import (5h): raw bytes (PDF: JSON with the text per page). */
+export async function importFile(name, body, ai) {
+  const r = await fetch(`/api/import${qs({ name, ai })}`, { method: "POST", headers: headers({ "content-type": "application/octet-stream" }), body })
+  return parse(r)
+}
+
 const blobCache = new Map()
 /** Attachment as object URL (images in the preview; <img src> cannot send the token header). */
 export async function attachmentUrl(path) {

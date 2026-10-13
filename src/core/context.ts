@@ -8,6 +8,7 @@ import type { CrossCheck } from "./crosscheck"
 import type { Gym } from "./gym"
 import type { Library } from "./library"
 import type { ReviewKnowledge } from "./review-knowledge"
+import type { Importer } from "./importer"
 import type { AuditLog } from "./audit"
 import type { EventBus } from "./bus"
 import type { Doctor } from "./doctor"
@@ -103,6 +104,8 @@ export interface Ctx {
   library?: Library
   /** review knowledge from GitHub, pre-PR check (5f) */
   reviews?: ReviewKnowledge
+  /** document import (5h) */
+  importer?: Importer
   /** tasks delegated to opencode agents */
   agentTasks: AgentTasks
   /** review queue and curator of this instance (web actions "review now", "curate") */

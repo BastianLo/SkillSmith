@@ -11,7 +11,7 @@ npm init -y >/dev/null
 npm install --no-audit --no-fund uplot@1.6.32 mermaid@11.17.2 highlight.js@11.11.1 \
   @codemirror/state@6 @codemirror/view@6 @codemirror/commands@6 @codemirror/language@6 \
   @codemirror/lang-markdown@6 @codemirror/autocomplete@6 @codemirror/search@6 @lezer/highlight@1 \
-  d3-force@3 d3-drag@3 d3-zoom@3 d3-selection@3 >/dev/null
+  d3-force@3 d3-drag@3 d3-zoom@3 d3-selection@3 pdfjs-dist@4.10.38 >/dev/null
 cp "$here/codemirror.entry.js" "$here/highlight.entry.js" "$here/d3.entry.js" .
 bun build ./codemirror.entry.js --format esm --minify --outfile "$out/codemirror.js"
 bun build ./highlight.entry.js --format esm --minify --outfile "$out/highlight.js"
@@ -24,4 +24,6 @@ cp node_modules/mermaid/LICENSE "$out/LICENSE-mermaid.txt"
 cp node_modules/highlight.js/LICENSE "$out/LICENSE-highlightjs.txt"
 cp node_modules/@codemirror/view/LICENSE "$out/LICENSE-codemirror.txt"
 cp node_modules/d3-force/LICENSE "$out/LICENSE-d3-force.txt"
+cp node_modules/pdfjs-dist/build/pdf.min.mjs node_modules/pdfjs-dist/build/pdf.worker.min.mjs "$out/"
+cp node_modules/pdfjs-dist/LICENSE "$out/LICENSE-pdfjs.txt"
 echo "vendor libraries written to $out"

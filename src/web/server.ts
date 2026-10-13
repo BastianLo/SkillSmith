@@ -197,7 +197,7 @@ export class WebServer {
     }
     if (req.method === "OPTIONS") return new Response("preflight not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     const isPost = req.method === "POST"
-    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload"
+    const writePath = url.pathname === "/api/action" || url.pathname === "/api/upload" || url.pathname === "/api/import"
     if (req.method !== "GET" && req.method !== "HEAD" && !(isPost && writePath)) return new Response("method not allowed", { status: 405, headers: { allow: "GET, HEAD, POST" } })
     if (!url.pathname.startsWith("/api/")) return this.staticFile(url.pathname)
     const given = req.headers.get("x-smith-token") ?? ""
@@ -221,7 +221,7 @@ export class WebServer {
         this.ctx.audit?.security("origin", `Sec-Fetch-Site ${site}`)
         return this.json(403, { error: "nur aus der Weboberfläche selbst" })
       }
-      return url.pathname === "/api/action" ? this.action(req, hasToken) : this.upload(req, url)
+      return url.pathname === "/api/action" ? this.action(req, hasToken) : url.pathname === "/api/import" ? this.importUpload(req, url) : this.upload(req, url)
     }
     try {
       if (url.pathname === "/api/events") {
@@ -268,6 +268,22 @@ export class WebServer {
       const e = toActionError(err)
       if (e.status >= 500) this.ctx.log.warn(`web action failed`, e.message)
       return this.json(e.status, { error: e.message, ...e.body })
+    }
+  }
+
+  /** Document import (5h): raw bytes of the file (PDF: the text per page as JSON from pdf.js). */
+  private async importUpload(req: Request, url: URL): Promise<Response> {
+    const ctx = this.ctx
+    try {
+      if (ctx.options.web.readOnly) return this.json(403, { error: "Die Weboberfläche ist nur lesend" })
+      const type = (req.headers.get("content-type") ?? "").split(";")[0].trim().toLowerCase()
+      if (type !== "application/octet-stream") return this.json(415, { error: "nur application/octet-stream" })
+      const data = await this.body(req, Math.round(ctx.options.import.maxMB * 1024 * 1024) + 1024)
+      const result = await executeAction({ ctx, actor: "web" }, { action: "import.create", args: { name: (url.searchParams.get("name") ?? "").slice(0, 200), ai: url.searchParams.get("ai") || undefined } }, data)
+      return this.json(200, result)
+    } catch (err) {
+      const e = toActionError(err)
+      return this.json(e.status, { error: e.message })
     }
   }
 
